@@ -232,7 +232,7 @@ namespace dxvk {
     // DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020, we should use our monitor
     // info to flip this over to that.
     // As on Windows this would automatically engage HDR mode.
-    pDesc->ColorSpace            = DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;
+    pDesc->ColorSpace            = DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
     pDesc->RedPrimary[0]         = m_metadata.redPrimary[0];
     pDesc->RedPrimary[1]         = m_metadata.redPrimary[1];
     pDesc->GreenPrimary[0]       = m_metadata.greenPrimary[0];
