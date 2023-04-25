@@ -151,6 +151,7 @@ namespace dxvk {
   
   void DxvkCsThread::threadFunc() {
     env::setThreadName("dxvk-cs");
+    setThreadAffinity(dxvk::this_thread::get_id(), ThreadAffinity::Ccd0);
 
     DxvkCsChunkRef chunk;
 

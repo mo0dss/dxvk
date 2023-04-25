@@ -92,6 +92,7 @@ namespace dxvk {
 
   void DxvkSubmissionQueue::submitCmdLists() {
     env::setThreadName("dxvk-submit");
+    setThreadAffinity(dxvk::this_thread::get_id(), ThreadAffinity::Ccd0);
 
     std::unique_lock<dxvk::mutex> lock(m_mutex);
 
@@ -151,6 +152,7 @@ namespace dxvk {
   
   void DxvkSubmissionQueue::finishCmdLists() {
     env::setThreadName("dxvk-queue");
+    setThreadAffinity(dxvk::this_thread::get_id(), ThreadAffinity::Ccd0);
 
     while (!m_stopped.load()) {
       std::unique_lock<dxvk::mutex> lock(m_mutex);

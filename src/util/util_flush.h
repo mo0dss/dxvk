@@ -1,8 +1,12 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <unordered_map>
 #include <vector>
+
+#include "thread.h"
 
 namespace dxvk {
 
@@ -65,6 +69,12 @@ namespace dxvk {
 
     uint64_t      m_lastFlushChunkId      = 0ull;
     uint64_t      m_lastFlushSubmissionId = 0ull;
+
+    dxvk::thread::id                  m_pinnedThreadId   = { };
+    std::array<dxvk::thread::id, 500> m_flushThreadIds   = { };
+    uint32_t                          m_flushThreadIndex = 0;
+
+    std::unordered_map<dxvk::thread::id, uint32_t> m_flushCountPerThread;
 
   };
 

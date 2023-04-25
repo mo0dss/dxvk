@@ -52,17 +52,28 @@ namespace dxvk::bit {
     return (value >> fst) & ~(~T(0) << (lst - fst + 1));
   }
 
-  inline uint32_t popcntStep(uint32_t n, uint32_t mask, uint32_t shift) {
+  template<typename T, typename U>
+  inline T popcntStep(T n, U mask, uint32_t shift) {
     return (n & mask) + ((n & ~mask) >> shift);
   }
   
   inline uint32_t popcnt(uint32_t n) {
-    n = popcntStep(n, 0x55555555, 1);
-    n = popcntStep(n, 0x33333333, 2);
-    n = popcntStep(n, 0x0F0F0F0F, 4);
-    n = popcntStep(n, 0x00FF00FF, 8);
-    n = popcntStep(n, 0x0000FFFF, 16);
+    n = popcntStep(n, 0x55555555u, 1);
+    n = popcntStep(n, 0x33333333u, 2);
+    n = popcntStep(n, 0x0F0F0F0Fu, 4);
+    n = popcntStep(n, 0x00FF00FFu, 8);
+    n = popcntStep(n, 0x0000FFFFu, 16);
     return n;
+  }
+  
+  inline uint32_t popcnt(uint64_t n) {
+    n = popcntStep(n, 0x5555555555555555ull, 1);
+    n = popcntStep(n, 0x3333333333333333ull, 2);
+    n = popcntStep(n, 0x0F0F0F0F0F0F0F0Full, 4);
+    n = popcntStep(n, 0x00FF00FF00FF00FFull, 8);
+    n = popcntStep(n, 0x0000FFFF0000FFFFull, 16);
+    n = popcntStep(n, 0x00000000FFFFFFFFull, 32);
+    return uint32_t(n);
   }
   
   inline uint32_t tzcnt(uint32_t n) {

@@ -74,6 +74,38 @@ namespace dxvk {
 
     m_lastFlushChunkId = chunkId;
     m_lastFlushSubmissionId = submissionId;
+
+    // Pin any app thread that does at least 70% of all submissions
+    // over a long period of time to the same set of threads as the
+    // CS thread in order to potentially improve performance.
+    auto newThreadId = dxvk::this_thread::get_id();
+    auto oldThreadId = m_flushThreadIds[m_flushThreadIndex];
+
+    m_flushThreadIndex += 1;
+    m_flushThreadIndex %= m_flushThreadIds.size();
+
+    if (oldThreadId == newThreadId)
+      return;
+
+    if (oldThreadId != dxvk::thread::id()) {
+      auto entry = m_flushCountPerThread.find(oldThreadId);
+
+      if (entry != m_flushCountPerThread.end())
+        entry->second -= 1;
+    }
+
+    auto entry = m_flushCountPerThread.insert({ newThreadId, 0 });
+    entry.first->second += 1;
+
+    if (entry.first->second == (m_flushThreadIds.size() * 7) / 10) {
+      if (m_pinnedThreadId != newThreadId) {
+        if (m_pinnedThreadId != dxvk::thread::id())
+          setThreadAffinity(m_pinnedThreadId, ThreadAffinity::Default);
+
+        setThreadAffinity(newThreadId, ThreadAffinity::Ccd0);
+        m_pinnedThreadId = newThreadId;
+      }
+    }
   }
 
 }

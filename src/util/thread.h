@@ -24,6 +24,19 @@ namespace dxvk {
     Lowest,
   };
 
+
+  /**
+   * \brief Thread affinity
+   */
+  enum class ThreadAffinity : uint32_t {
+    /** Allow default set of cores for the
+     *  given thread */
+    Default     = 0,
+    /** Restrict to the most performant set of
+     *  cores with a common last-level cache. */
+    Ccd0        = 1,
+  };
+
 #ifdef _WIN32
 
   using ThreadProc = std::function<void()>;
@@ -127,6 +140,8 @@ namespace dxvk {
     inline thread::id get_id() {
       return thread::id(GetCurrentThreadId());
     }
+
+    void set_affinity(ThreadAffinity affinity);
 
     bool isInModuleDetachment();
   }
@@ -307,7 +322,10 @@ namespace dxvk {
 
 #else
   class thread : public std::thread {
+
   public:
+
+    using id = uint32_t;
     using std::thread::thread;
 
     void set_priority(ThreadPriority priority) {
@@ -320,6 +338,8 @@ namespace dxvk {
       }
       ::pthread_setschedparam(this->native_handle(), policy, &param);
     }
+
+    uint32_t get_id() const;
   };
 
   using mutex              = std::mutex;
@@ -338,5 +358,13 @@ namespace dxvk {
     }
   }
 #endif
+
+  /**
+   * \brief Sets affinity for a given thread
+   *
+   * \param [in] threadId Unique thread ID
+   * \param [in] affinity Thread affinity
+   */
+  void setThreadAffinity(dxvk::thread::id threadId, ThreadAffinity affinity);
 
 }
