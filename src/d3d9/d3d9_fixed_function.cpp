@@ -1798,10 +1798,10 @@ namespace dxvk {
             texcoord, texcoord, texcoordCnt, indices.data());
 
           uint32_t projIdx = m_fsKey.Stages[i].Contents.ProjectedCount;
-          if (projIdx == 0)
+          if (projIdx == 0 || projIdx > texcoordCnt)
             projIdx = texcoordCnt;
-          else
-            projIdx--;
+
+          projIdx--;
 
           uint32_t projValue = 0;
 
