@@ -1102,19 +1102,30 @@ namespace dxvk {
     m_module.opStore(m_vs.out.NORMAL, outNrm);
 
     for (uint32_t i = 0; i < caps::TextureStageCount; i++) {
-      uint32_t inputIndex = (m_vsKey.Data.Contents.TexcoordIndices >> (i * 3)) & 0b111;
-      uint32_t inputFlags = (m_vsKey.Data.Contents.TexcoordFlags   >> (i * 3)) & 0b111;
+      uint32_t inputIndex    = (m_vsKey.Data.Contents.TexcoordIndices  >> (i * 3)) & 0b111;
+      uint32_t inputFlags    = (m_vsKey.Data.Contents.TexcoordFlags    >> (i * 3)) & 0b111;
+      uint32_t texcoordCount = (m_vsKey.Data.Contents.TexcoordDeclMask >> (i * 3)) & 0b111;
 
       uint32_t transformed;
 
       const uint32_t wIndex = 3;
 
       uint32_t flags = (m_vsKey.Data.Contents.TransformFlags >> (i * 3)) & 0b111;
-      uint32_t count = flags;
+      uint32_t count;
       switch (inputFlags) {
         default:
         case (DXVK_TSS_TCI_PASSTHRU >> TCIOffset):
           transformed = m_vs.in.TEXCOORD[inputIndex & 0xFF];
+          // flags is actually the number of elements that get passed
+          // to the rasterizer.
+          count = flags;
+          // Clamp the number of elements by the number of elements
+          // in the texcoord input.
+          if (texcoordCount && (!count || count > texcoordCount))
+            count = texcoordCount;
+          // TODO: Do we need to special case 1 here? There is no
+          // 1D texture type in D3D9, so may need to see what is expected
+          // if an app ends up hitting this.
           break;
 
         case (DXVK_TSS_TCI_CAMERASPACENORMAL >> TCIOffset):
