@@ -672,10 +672,6 @@ namespace dxvk {
       if (!frame.frameId)
         return;
 
-      // Apply the FPS limiter before signaling the frame event in
-      // order to reduce latency if the app uses it for frame pacing.
-      applyFrameRateLimit(frame.mode);
-
       // If the present operation has succeeded, actually wait for it to complete.
       // Don't bother with it on MAILBOX / IMMEDIATE modes since doing so would
       // restrict us to the display refresh rate on some platforms (XWayland).
@@ -686,6 +682,10 @@ namespace dxvk {
         if (vr < 0 && vr != VK_ERROR_OUT_OF_DATE_KHR && vr != VK_ERROR_SURFACE_LOST_KHR)
           Logger::err(str::format("Presenter: vkWaitForPresentKHR failed: ", vr));
       }
+
+      // Apply the FPS limiter before signaling the frame event in
+      // order to reduce latency if the app uses it for frame pacing.
+      applyFrameRateLimit(frame.mode);
 
       // Always signal even on error, since failures here
       // are transparent to the front-end.
