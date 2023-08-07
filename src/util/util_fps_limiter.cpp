@@ -1,3 +1,4 @@
+#include <charconv>
 #include <thread>
 
 #include "thread.h"
@@ -17,7 +18,9 @@ namespace dxvk {
 
     if (!env.empty()) {
       try {
-        setTargetFrameRate(std::stod(env));
+        double f = 0.0f;
+        std::from_chars(env.data(), env.data() + env.size(), f);
+        setTargetFrameRate(f);
         m_envOverride = true;
       } catch (const std::invalid_argument&) {
         // no-op
