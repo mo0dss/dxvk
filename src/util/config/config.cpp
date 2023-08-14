@@ -817,6 +817,12 @@ namespace dxvk {
     { R"(\\WILD HEARTS(_Trial)?\.exe$)", {{
       { "dxvk.maxChunkSize",                 "4" },
     }} },
+    /* Ratchet & Clank: Rift Apart - does not allow
+     * enabling ray tracing if it sees an AMD GPU. */
+    { R"(\\RiftApart\.exe$)", {{
+      { "dxgi.hideNvidiaGpu",               "False" },
+      { "dxgi.hideAmdGpu",                  "True"  },
+    }} },
   }};
 
 
