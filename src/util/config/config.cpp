@@ -863,6 +863,12 @@ namespace dxvk {
     { R"(\\Cyberpunk2077\.exe$)", {{
       { "dxgi.useMonitorFallback",          "True" },
     }} },
+    /* Metro Exodus Enhanced Edition picks GPU adapters
+     * by available VRAM, which causes issues on some
+     * systems with integrated graphics. */
+    { R"(\\Metro Exodus Enhanced Edition\\MetroExodus\.exe$)", {{
+      { "dxvk.hideIntegratedGraphics",      "True" },
+    }} },
   }};
 
 
