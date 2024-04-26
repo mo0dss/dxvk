@@ -5931,10 +5931,11 @@ namespace dxvk {
     if (!pushConstRange.size)
       return;
 
-    // Push constants should be compatible between complete and
-    // independent layouts, so always ask for the complete one
+    bool independentSets = BindPoint == VK_PIPELINE_BIND_POINT_GRAPHICS
+                        && m_flags.test(DxvkContextFlag::GpIndependentSets);
+
     m_cmd->cmdPushConstants(
-      bindings->getPipelineLayout(false),
+      bindings->getPipelineLayout(independentSets),
       pushConstRange.stageFlags,
       pushConstRange.offset,
       pushConstRange.size,
