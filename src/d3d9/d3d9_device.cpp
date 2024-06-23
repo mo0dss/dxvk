@@ -5283,7 +5283,7 @@ namespace dxvk {
         if (likely(copy.copyElementStride == copy.copyElementSize)) {
           std::memcpy(data, src, copy.copyBufferLength);
         } else {
-          for (uint32_t j = 0; j * copy.copyElementCount; j++) {
+          for (uint32_t j = 0; j < copy.copyElementCount; j++) {
             std::memcpy(data + j * copy.copyElementSize, src + j * copy.copyElementStride, copy.copyElementSize);
           }
           if (unlikely(copy.copyBufferLength > copy.copyElementCount * copy.copyElementSize)) {
@@ -5307,11 +5307,13 @@ namespace dxvk {
       m_flags.set(D3D9DeviceFlag::DirtyVertexBuffers);
     }
 
-    // Change the draw call parameters to reflect the changed vertex buffers
-    if (NumIndices != 0) {
-      BaseVertexIndex = -FirstVertexIndex;
-    } else {
-      FirstVertexIndex = 0;
+    if (dynamicSysmemVBOs) {
+      // Change the draw call parameters to reflect the changed vertex buffers
+      if (NumIndices != 0) {
+        BaseVertexIndex = -FirstVertexIndex;
+      } else {
+        FirstVertexIndex = 0;
+      }
     }
 
     if (dynamicSysmemIBO) {
@@ -7441,6 +7443,8 @@ namespace dxvk {
 
         stage.Projected      = (ttff & D3DTTFF_PROJECTED) ? 1      : 0;
         stage.ProjectedCount = (ttff & D3DTTFF_PROJECTED) ? count  : 0;
+
+        stage.SampleDref = (m_depthTextures & (1 << idx)) != 0;
       }
 
       auto& stage0 = key.Stages[0].Contents;
