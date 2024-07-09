@@ -116,6 +116,9 @@ namespace dxvk {
     /// Forces sample rate shading
     bool forceSampleRateShading;
 
+    /// Forces auto mipmap generation
+    bool forceAutoMipmaps;
+
     /// Enumerate adapters by displays
     bool enumerateByDisplays;
 

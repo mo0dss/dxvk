@@ -595,6 +595,11 @@ namespace dxvk {
                             || (Usage & D3DUSAGE_DYNAMIC)
                             || IsVendorFormat(EnumerateFormat(Format));
 
+    if ((desc.Usage & D3DUSAGE_AUTOGENMIPMAP) == 0 && m_d3d9Options.forceAutoMipmaps &&
+        m_adapter->CheckDeviceFormat(m_deviceType, D3D9Format::Unknown, D3DUSAGE_AUTOGENMIPMAP, D3DRTYPE_TEXTURE, desc.Format)) {
+      desc.Usage |= D3DUSAGE_AUTOGENMIPMAP;
+    }
+
     if (FAILED(D3D9CommonTexture::NormalizeTextureProperties(this, D3DRTYPE_TEXTURE, &desc)))
       return D3DERR_INVALIDCALL;
 
@@ -607,7 +612,7 @@ namespace dxvk {
       }
 
       if (pSharedHandle != nullptr && Pool != D3DPOOL_DEFAULT)
-        return D3DERR_INVALIDCALL;
+        return D3DERR_INVALIDCALL;\
 
       const Com<D3D9Texture2D> texture = new D3D9Texture2D(this, &desc, pSharedHandle);
 
