@@ -425,6 +425,14 @@ namespace dxvk {
     { R"(\\GalaxyClient\.exe$)", {{
       { "dxvk.maxChunkSize",                "1"   },
     }} },
+    /* Epic Games Launcher                        */
+    { R"(\\(EpicGamesLauncher|EpicWebHelper)\.exe$)", {{
+      { "dxvk.maxChunkSize",                "1"   },
+    }} },
+    /* Blizzard Entertainment Battle.net          */
+    { R"(\\Battle\.net\.exe$)", {{
+      { "dxvk.maxChunkSize",                "1" },
+    }} },
     /* Fallout 76
      * Game tries to be too "smart" and changes sync
      * interval based on performance (in fullscreen)
@@ -439,10 +447,6 @@ namespace dxvk {
      */
     { R"(\\Fallout76\.exe$)", {{
       { "dxgi.syncInterval",                "1" },
-    }} },
-    /* Blizzard Entertainment Battle.net          */
-    { R"(\\Battle\.net\.exe$)", {{
-      { "dxvk.maxChunkSize",                "1" },
     }} },
     /* Bladestorm Nightmare                       *
      * Game speed increases when above 60 fps in  *
@@ -475,30 +479,15 @@ namespace dxvk {
       { "d3d11.exposeDriverCommandLists",   "False" },
       { "dxgi.hideNvidiaGpu",               "False" },
     }} },
-    /* Red Faction Guerrilla Re-Mars-tered        *
-     * Broken skybox                              */
-    { R"(\\rfg\.exe$)", {{
-      { "d3d11.longMad",                  "True"    },
-    }} },
-    /* Guild Wars 2 - Fixes invisibility effect   *
-     * flicker when invariantPosition is enabled  */
-    { R"(\\Gw2-64\.exe$)", {{
-      { "d3d11.longMad",                  "True"    },
-    }} },
-    /* Ghostbusters: The Video Game Remastered    *
-     * Flickering on character faces              */
-    { R"(\\ghost\.exe$)", {{
-      { "d3d11.longMad",                  "True"    },
-    }} },
-    /* Watch_Dogs series - Some objects flicker  */
-    { R"(\\watch(_)?dogs(2|Legion)?\.exe$)", {{
-      { "d3d11.longMad",                  "True"    },
-    }} },
     /* Crysis 1/Warhead - Game bug in d3d10 makes *
      * it select lowest supported refresh rate    */
     { R"(\\Crysis(64)?\.exe$)", {{
       { "d3d9.maxFrameRate",              "-1"      },
       { "dxgi.maxFrameRate",              "-1"      },
+    }} },
+    /* EDF6 - possible race condition?            */
+    { R"(\\EDF6\.exe$)", {{
+      { "d3d11.enableContextLock",          "True" },
     }} },
 
     /**********************************************/
@@ -626,7 +615,6 @@ namespace dxvk {
      * like a game bug that d3d9 drivers work     *
      * around.                                    */
     { R"(\\(BF2|BF2142)\.exe$)", {{
-      { "d3d9.longMad",                     "True" },
       { "d3d9.deviceLossOnFocusLoss",       "True" },
       { "d3d9.countLosableResources",       "False"},
     }} },
@@ -642,7 +630,6 @@ namespace dxvk {
     { R"(\\(trl|tra|tru)\.exe$)", {{
       { "d3d9.cachedDynamicBuffers",        "True" },
       { "d3d9.maxFrameRate",                "60" },
-      { "d3d9.longMad",                     "True" },
     }} },
     /* Everquest                                 */
     { R"(\\eqgame\.exe$)", {{
@@ -996,9 +983,21 @@ namespace dxvk {
       R"(|The Lord of the Rings, The Rise of the Witch-king)\\game\.dat$)", {{
       { "d3d9.cachedDynamicBuffers",        "True" },
     }} },
-    /* WRC4 - Audio breaks above 60fps */
+    /* WRC4 - Audio breaks above 60fps           */
     { R"(\\WRC4\.exe$)", {{
       { "d3d9.maxFrameRate",                "60" },
+    }} },
+    /* Splinter Cell Conviction - Alt-tab black  *
+     * screen and unsupported GPU complaint      */
+    { R"(\\conviction_game\.exe$)", {{
+      { "d3d9.deviceLossOnFocusLoss",       "True" },
+      { "dxgi.customVendorId",              "10de" },
+      { "dxgi.customDeviceId",              "05e0" },
+      { "dxgi.customDeviceDesc",            "GeForce GTX 295" },
+    }} },
+    /* Resident Evil: Operation Raccoon City     */
+    { R"(\\RaccoonCity\.exe$)", {{
+      { "d3d9.textureMemory",               "0" },
     }} },
 
     /**********************************************/
@@ -1130,6 +1129,10 @@ namespace dxvk {
      * Leaks a resource when alt-tabbing          */
     { R"(\\Inquisitor\.exe$)", {{
       { "d3d9.countLosableResources",      "False" },
+    }} },
+    /* Art of Murder FBI Confidential - CPU perf  */
+    { R"(\\Art of Murder - FBI Confidential\\game\.exe$)", {{
+      { "d3d9.cachedDynamicBuffers",       "True" },
     }} },
   }};
 
