@@ -353,10 +353,20 @@ namespace dxvk {
     // which can be an integrated GPU on some systems. Report available memory as shared
     // memory and a small amount as dedicated carve-out if a dedicated GPU is present,
     // otherwise report memory normally to not unnecessarily confuse games on Deck.
-    if ((m_adapter->isLinkedToDGPU() && deviceProp.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU) || options->emulateUMA) {
+    if ((m_adapter->isLinkedToDGPU() && deviceProp.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU)) {
       sharedMemory = std::max(sharedMemory, deviceMemory);
       deviceMemory = 512ull << 20;
     }
+
+    // Make sure to never return exact powers of two outside the 32-bit range
+    // because some games don't understand the concept of actually having VRAM
+    constexpr VkDeviceSize adjustment = 32ull << 20;
+
+    if (deviceMemory && !(deviceMemory & 0xffffffffull))
+      deviceMemory -= adjustment;
+
+    if (sharedMemory && !(sharedMemory & 0xffffffffull))
+      sharedMemory -= adjustment;
 
     // Some games are silly and need their memory limited
     if (options->maxDeviceMemory > 0
