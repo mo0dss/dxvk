@@ -483,6 +483,11 @@ namespace dxvk {
     { R"(\\EDF6\.exe$)", {{
       { "d3d11.enableContextLock",          "True" },
     }} },
+    /* Kena: Bridge of Spirits: intel water       * 
+      flickering issues                           */
+    { R"(\\Kena-Win64-Shipping\.exe$)", {{
+      { "dxgi.hideIntelGpu",                 "True" },
+    }} },
 
     /**********************************************/
     /* D3D9 GAMES                                 */
@@ -994,6 +999,11 @@ namespace dxvk {
     { R"(\\RaccoonCity\.exe$)", {{
       { "d3d9.textureMemory",               "0" },
     }} },
+    /* APB: Reloaded                               *
+     * Fixes frametime jumps when shooting         */
+    { R"(\\APB\.exe$)", {{
+      { "d3d9.cachedDynamicBuffers",        "True" },
+    }} },
 
     /**********************************************/
     /* D3D8 GAMES                                 */
@@ -1128,6 +1138,10 @@ namespace dxvk {
     /* Art of Murder FBI Confidential - CPU perf  */
     { R"(\\Art of Murder - FBI Confidential\\game\.exe$)", {{
       { "d3d9.cachedDynamicBuffers",       "True" },
+    }} },
+    /* Max Payne 1 - Stalls waiting for an index buffer */
+    { R"(\\MaxPayne\.exe$)", {{
+      { "d3d9.allowDirectBufferMapping",    "False" },
     }} },
   }};
 
