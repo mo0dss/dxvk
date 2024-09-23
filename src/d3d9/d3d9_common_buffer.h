@@ -46,7 +46,7 @@ namespace dxvk {
 
     }
 
-    inline bool IsDegenerate() { return min == max; }
+    inline bool IsDegenerate() const { return min == max; }
 
     inline void Conjoin(D3D9Range range) {
       if (IsDegenerate())
@@ -180,7 +180,7 @@ namespace dxvk {
     /**
      * \brief Whether or not the staging buffer needs to be copied to the actual buffer
      */
-    inline bool NeedsUpload() { return m_desc.Pool != D3DPOOL_DEFAULT && !m_dirtyRange.IsDegenerate(); }
+    inline bool NeedsUpload() const { return m_desc.Pool != D3DPOOL_DEFAULT && !m_dirtyRange.IsDegenerate(); }
 
     void PreLoad();
 
@@ -200,18 +200,17 @@ namespace dxvk {
 
 
     /**
-     * \brief Queries sequence number for a given subresource
+     * \brief Queries sequence number
      *
      * Returns which CS chunk the resource was last used on.
-     * \param [in] Subresource Subresource index
-     * \returns Sequence number for the given subresource
+     * \returns Sequence number
      */
     uint64_t GetMappingBufferSequenceNumber() const {
       return HasSequenceNumber() ? m_seq
         : DxvkCsThread::SynchronizeAll;
     }
 
-    bool IsSysmemDynamic() const {
+    bool DoPerDrawUpload() const {
       return m_desc.Pool == D3DPOOL_SYSTEMMEM && (m_desc.Usage & D3DUSAGE_DYNAMIC) != 0;
     }
 
