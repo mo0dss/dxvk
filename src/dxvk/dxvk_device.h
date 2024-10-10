@@ -134,7 +134,18 @@ namespace dxvk {
       return m_queues.transfer.queueHandle
           != m_queues.graphics.queueHandle;
     }
-    
+
+    /**
+     * \brief Queries sharing mode info
+     * \returns Sharing mode info
+     */
+    DxvkSharingModeInfo getSharingMode() const {
+      DxvkSharingModeInfo result = { };
+      result.queueFamilies[0] = m_queues.graphics.queueFamily;
+      result.queueFamilies[1] = m_queues.transfer.queueFamily;
+      return result;
+    }
+
     /**
      * \brief The instance
      * 
@@ -311,18 +322,7 @@ namespace dxvk {
     Rc<DxvkBuffer> createBuffer(
       const DxvkBufferCreateInfo& createInfo,
             VkMemoryPropertyFlags memoryType);
-    
-    /**
-     * \brief Creates a buffer view
-     * 
-     * \param [in] buffer The buffer to view
-     * \param [in] createInfo Buffer view properties
-     * \returns The buffer view object
-     */
-    Rc<DxvkBufferView> createBufferView(
-      const Rc<DxvkBuffer>&           buffer,
-      const DxvkBufferViewCreateInfo& createInfo);
-    
+
     /**
      * \brief Creates an image object
      * 
@@ -333,17 +333,6 @@ namespace dxvk {
     Rc<DxvkImage> createImage(
       const DxvkImageCreateInfo&  createInfo,
             VkMemoryPropertyFlags memoryType);
-
-    /**
-     * \brief Creates an image view
-     * 
-     * \param [in] image The image to create a view for
-     * \param [in] createInfo Image view create info
-     * \returns The image view
-     */
-    Rc<DxvkImageView> createImageView(
-      const Rc<DxvkImage>&            image,
-      const DxvkImageViewCreateInfo&  createInfo);
     
     /**
      * \brief Creates a sampler object
@@ -352,7 +341,18 @@ namespace dxvk {
      * \returns Newly created sampler object
      */
     Rc<DxvkSampler> createSampler(
-      const DxvkSamplerCreateInfo&  createInfo);
+      const DxvkSamplerKey&         createInfo);
+
+    /**
+     * \brief Creates local allocation cache
+     *
+     * \param [in] bufferUsage Required buffer usage
+     * \param [in] propertyFlags Memory properties
+     * \returns Allocation cache object
+     */
+    DxvkLocalAllocationCache createAllocationCache(
+            VkBufferUsageFlags    bufferUsage,
+            VkMemoryPropertyFlags propertyFlags);
 
     /**
      * \brief Creates a sparse page allocator
@@ -396,12 +396,29 @@ namespace dxvk {
     DxvkStatCounters getStatCounters();
 
     /**
-     * \brief Retrieves memors statistics
+     * \brief Queries memory statistics
      *
      * \param [in] heap Memory heap index
-     * \returns Memory stats for this heap
+     * \returns Memory usage for this heap
      */
     DxvkMemoryStats getMemoryStats(uint32_t heap);
+
+    /**
+     * \brief Queries detailed memory allocation statistics
+     *
+     * Expensive, should be used with caution.
+     * \param [out] stats Allocation statistics
+     * \returns Shared allocation cache stats
+     */
+    DxvkSharedAllocationCacheStats getMemoryAllocationStats(DxvkMemoryAllocationStats& stats);
+
+    /**
+     * \brief Queries sampler statistics
+     * \returns Sampler stats
+     */
+    DxvkSamplerStats getSamplerStats() {
+      return m_objects.samplerPool().getStats();
+    }
 
     /**
      * \brief Retreves current frame ID
@@ -410,27 +427,17 @@ namespace dxvk {
     uint32_t getCurrentFrameId() const;
     
     /**
-     * \brief Notifies adapter about memory allocation
+     * \brief Notifies adapter about memory allocation changes
      *
      * \param [in] heap Memory heap index
-     * \param [in] bytes Allocation size
+     * \param [in] allocated Allocated size delta
+     * \param [in] used Used size delta
      */
-    void notifyMemoryAlloc(
+    void notifyMemoryStats(
             uint32_t            heap,
-            int64_t             bytes) {
-      m_adapter->notifyMemoryAlloc(heap, bytes);
-    }
-
-    /**
-     * \brief Notifies adapter about memory suballocation
-     *
-     * \param [in] heap Memory heap index
-     * \param [in] bytes Allocation size
-     */
-    void notifyMemoryUse(
-            uint32_t            heap,
-            int64_t             bytes) {
-      m_adapter->notifyMemoryUse(heap, bytes);
+            int64_t             allocated,
+            int64_t             used) {
+      m_adapter->notifyMemoryStats(heap, allocated, used);
     }
 
     /**
@@ -543,6 +550,8 @@ namespace dxvk {
     Rc<DxvkAdapter>             m_adapter;
     Rc<vk::DeviceFn>            m_vkd;
 
+    DxvkDeviceQueueSet          m_queues;
+
     DxvkDeviceFeatures          m_features;
     DxvkDeviceInfo              m_properties;
     
@@ -551,8 +560,6 @@ namespace dxvk {
 
     sync::Spinlock              m_statLock;
     DxvkStatCounters            m_statCounters;
-    
-    DxvkDeviceQueueSet          m_queues;
     
     DxvkRecycler<DxvkCommandList, 16> m_recycledCommandLists;
     

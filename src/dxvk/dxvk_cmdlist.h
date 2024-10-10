@@ -15,7 +15,6 @@
 #include "dxvk_presenter.h"
 #include "dxvk_signal.h"
 #include "dxvk_sparse.h"
-#include "dxvk_staging.h"
 #include "dxvk_stats.h"
 
 namespace dxvk {
@@ -249,21 +248,6 @@ namespace dxvk {
     void next();
     
     /**
-     * \brief Frees buffer slice
-     * 
-     * After the command buffer execution has finished,
-     * the given buffer slice will be released to the
-     * virtual buffer object so that it can be reused.
-     * \param [in] buffer The virtual buffer object
-     * \param [in] slice The buffer slice handle
-     */
-    void freeBufferSlice(
-      const Rc<DxvkBuffer>&           buffer,
-      const DxvkBufferSliceHandle&    slice) {
-      m_bufferTracker.freeBufferSlice(buffer, slice);
-    }
-    
-    /**
      * \brief Adds a resource to track
      * 
      * Adds a resource to the internal resource tracker.
@@ -271,11 +255,35 @@ namespace dxvk {
      * the device can guarantee that the submission has
      * completed.
      */
+    template<DxvkAccess Access>
+    void trackResource(Rc<DxvkResourceAllocation>&& rc) {
+      m_resources.trackResource(DxvkLifetime<DxvkResourceAllocation>(std::move(rc), Access));
+    }
+
+    template<DxvkAccess Access>
+    void trackResource(const Rc<DxvkResourceAllocation>& rc) {
+      m_resources.trackResource(DxvkLifetime<DxvkResourceAllocation>(rc.ptr(), Access));
+    }
+
+    template<DxvkAccess Access, typename T>
+    void trackResource(Rc<T>&& rc) {
+      m_resources.trackResource(DxvkLifetime<DxvkResource>(std::move(rc), Access));
+    }
+
     template<DxvkAccess Access, typename T>
     void trackResource(const Rc<T>& rc) {
-      m_resources.trackResource<Access>(rc.ptr());
+      m_resources.trackResource(DxvkLifetime<DxvkResource>(rc.ptr(), Access));
     }
-    
+
+    template<DxvkAccess Access, typename T>
+    void trackResource(T* rc) {
+      m_resources.trackResource(DxvkLifetime<DxvkResource>(rc, Access));
+    }
+
+    void trackSampler(const Rc<DxvkSampler>& sampler) {
+      m_resources.trackSampler(sampler);
+    }
+
     /**
      * \brief Tracks a GPU event
      * 
@@ -323,7 +331,7 @@ namespace dxvk {
      * \brief Notifies resources and signals
      */
     void notifyObjects() {
-      m_resources.notify();
+      m_resources.reset();
       m_signalTracker.notify();
     }
 
@@ -433,18 +441,20 @@ namespace dxvk {
     
     
     void cmdBindDescriptorSet(
+            DxvkCmdBuffer             cmdBuffer,
             VkPipelineBindPoint       pipeline,
             VkPipelineLayout          pipelineLayout,
             VkDescriptorSet           descriptorSet,
             uint32_t                  dynamicOffsetCount,
       const uint32_t*                 pDynamicOffsets) {
-      m_vkd->vkCmdBindDescriptorSets(m_cmd.execBuffer,
+      m_vkd->vkCmdBindDescriptorSets(getCmdBuffer(cmdBuffer),
         pipeline, pipelineLayout, 0, 1,
         &descriptorSet, dynamicOffsetCount, pDynamicOffsets);
     }
     
     
     void cmdBindDescriptorSets(
+            DxvkCmdBuffer             cmdBuffer,
             VkPipelineBindPoint       pipeline,
             VkPipelineLayout          pipelineLayout,
             uint32_t                  firstSet,
@@ -452,7 +462,7 @@ namespace dxvk {
       const VkDescriptorSet*          descriptorSets,
             uint32_t                  dynamicOffsetCount,
       const uint32_t*                 pDynamicOffsets) {
-      m_vkd->vkCmdBindDescriptorSets(m_cmd.execBuffer,
+      m_vkd->vkCmdBindDescriptorSets(getCmdBuffer(cmdBuffer),
         pipeline, pipelineLayout, firstSet, descriptorSetCount,
         descriptorSets, dynamicOffsetCount, pDynamicOffsets);
     }
@@ -478,9 +488,10 @@ namespace dxvk {
 
 
     void cmdBindPipeline(
+            DxvkCmdBuffer           cmdBuffer,
             VkPipelineBindPoint     pipelineBindPoint,
             VkPipeline              pipeline) {
-      m_vkd->vkCmdBindPipeline(m_cmd.execBuffer,
+      m_vkd->vkCmdBindPipeline(getCmdBuffer(cmdBuffer),
         pipelineBindPoint, pipeline);
     }
 
@@ -535,28 +546,30 @@ namespace dxvk {
     
     
     void cmdClearColorImage(
+            DxvkCmdBuffer           cmdBuffer,
             VkImage                 image,
             VkImageLayout           imageLayout,
       const VkClearColorValue*      pColor,
             uint32_t                rangeCount,
       const VkImageSubresourceRange* pRanges) {
-      m_cmd.usedFlags.set(DxvkCmdBuffer::ExecBuffer);
+      m_cmd.usedFlags.set(cmdBuffer);
 
-      m_vkd->vkCmdClearColorImage(m_cmd.execBuffer,
+      m_vkd->vkCmdClearColorImage(getCmdBuffer(cmdBuffer),
         image, imageLayout, pColor,
         rangeCount, pRanges);
     }
     
     
     void cmdClearDepthStencilImage(
+            DxvkCmdBuffer           cmdBuffer,
             VkImage                 image,
             VkImageLayout           imageLayout,
       const VkClearDepthStencilValue* pDepthStencil,
             uint32_t                rangeCount,
       const VkImageSubresourceRange* pRanges) {
-      m_cmd.usedFlags.set(DxvkCmdBuffer::ExecBuffer);
+      m_cmd.usedFlags.set(cmdBuffer);
 
-      m_vkd->vkCmdClearDepthStencilImage(m_cmd.execBuffer,
+      m_vkd->vkCmdClearDepthStencilImage(getCmdBuffer(cmdBuffer),
         image, imageLayout, pDepthStencil,
         rangeCount, pRanges);
     }
@@ -599,6 +612,7 @@ namespace dxvk {
 
 
     void cmdCopyQueryPoolResults(
+            DxvkCmdBuffer           cmdBuffer,
             VkQueryPool             queryPool,
             uint32_t                firstQuery,
             uint32_t                queryCount,
@@ -606,31 +620,32 @@ namespace dxvk {
             VkDeviceSize            dstOffset,
             VkDeviceSize            stride,
             VkQueryResultFlags      flags) {
-      m_cmd.usedFlags.set(DxvkCmdBuffer::ExecBuffer);
+      m_cmd.usedFlags.set(cmdBuffer);
 
-      m_vkd->vkCmdCopyQueryPoolResults(m_cmd.execBuffer,
+      m_vkd->vkCmdCopyQueryPoolResults(getCmdBuffer(cmdBuffer),
         queryPool, firstQuery, queryCount,
         dstBuffer, dstOffset, stride, flags);
     }
     
     
     void cmdDispatch(
+            DxvkCmdBuffer           cmdBuffer,
             uint32_t                x,
             uint32_t                y,
             uint32_t                z) {
-      m_cmd.usedFlags.set(DxvkCmdBuffer::ExecBuffer);
+      m_cmd.usedFlags.set(cmdBuffer);
 
-      m_vkd->vkCmdDispatch(m_cmd.execBuffer, x, y, z);
+      m_vkd->vkCmdDispatch(getCmdBuffer(cmdBuffer), x, y, z);
     }
     
     
     void cmdDispatchIndirect(
+            DxvkCmdBuffer           cmdBuffer,
             VkBuffer                buffer,
             VkDeviceSize            offset) {
-      m_cmd.usedFlags.set(DxvkCmdBuffer::ExecBuffer);
+      m_cmd.usedFlags.set(cmdBuffer);
 
-      m_vkd->vkCmdDispatchIndirect(
-        m_cmd.execBuffer, buffer, offset);
+      m_vkd->vkCmdDispatchIndirect(getCmdBuffer(cmdBuffer), buffer, offset);
     }
     
     
@@ -769,13 +784,26 @@ namespace dxvk {
     
     
     void cmdPushConstants(
+            DxvkCmdBuffer           cmdBuffer,
             VkPipelineLayout        layout,
             VkShaderStageFlags      stageFlags,
             uint32_t                offset,
             uint32_t                size,
       const void*                   pValues) {
-      m_vkd->vkCmdPushConstants(m_cmd.execBuffer,
+      m_vkd->vkCmdPushConstants(getCmdBuffer(cmdBuffer),
         layout, stageFlags, offset, size, pValues);
+    }
+
+
+    void cmdResetQueryPool(
+            DxvkCmdBuffer           cmdBuffer,
+            VkQueryPool             queryPool,
+            uint32_t                firstQuery,
+            uint32_t                queryCount) {
+      m_cmd.usedFlags.set(cmdBuffer);
+
+      m_vkd->vkCmdResetQueryPool(getCmdBuffer(cmdBuffer),
+        queryPool, firstQuery, queryCount);
     }
 
 
@@ -946,7 +974,14 @@ namespace dxvk {
       m_vkd->vkCmdSetStencilReference(m_cmd.execBuffer,
         faceMask, reference);
     }
-    
+
+
+    void cmdSetStencilWriteMask(
+            VkStencilFaceFlags      faceMask,
+            uint32_t                writeMask) {
+      m_vkd->vkCmdSetStencilWriteMask(m_cmd.execBuffer, faceMask, writeMask);
+    }
+
     
     void cmdSetViewport(
             uint32_t                viewportCount,
@@ -957,12 +992,13 @@ namespace dxvk {
 
 
     void cmdWriteTimestamp(
+            DxvkCmdBuffer           cmdBuffer,
             VkPipelineStageFlagBits2 pipelineStage,
             VkQueryPool             queryPool,
             uint32_t                query) {
-      m_cmd.usedFlags.set(DxvkCmdBuffer::ExecBuffer);
+      m_cmd.usedFlags.set(cmdBuffer);
 
-      m_vkd->vkCmdWriteTimestamp2(m_cmd.execBuffer,
+      m_vkd->vkCmdWriteTimestamp2(getCmdBuffer(cmdBuffer),
         pipelineStage, queryPool, query);
     }
     
@@ -1000,21 +1036,21 @@ namespace dxvk {
 
     void bindBufferMemory(
       const DxvkSparseBufferBindKey& key,
-      const DxvkSparsePageHandle&   memory) {
+      const DxvkResourceMemoryInfo& memory) {
       getSparseBindSubmission().bindBufferMemory(key, memory);
     }
 
 
     void bindImageMemory(
       const DxvkSparseImageBindKey& key,
-      const DxvkSparsePageHandle&   memory) {
+      const DxvkResourceMemoryInfo& memory) {
       getSparseBindSubmission().bindImageMemory(key, memory);
     }
 
 
     void bindImageOpaqueMemory(
       const DxvkSparseImageOpaqueBindKey& key,
-      const DxvkSparsePageHandle&   memory) {
+      const DxvkResourceMemoryInfo& memory) {
       getSparseBindSubmission().bindImageOpaqueMemory(key, memory);
     }
 
@@ -1048,7 +1084,6 @@ namespace dxvk {
     DxvkSignalTracker         m_signalTracker;
     DxvkGpuEventTracker       m_gpuEventTracker;
     DxvkGpuQueryTracker       m_gpuQueryTracker;
-    DxvkBufferTracker         m_bufferTracker;
     DxvkStatCounters          m_statCounters;
 
     DxvkCommandSubmission     m_commandSubmission;

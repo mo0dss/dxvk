@@ -621,6 +621,10 @@ namespace dxvk {
     { R"(\\k2\.exe$)", {{
       { "d3d9.memoryTrackTest",             "True" },
     }} },
+    /* Time Leap Paradise SUPER LIVE             */
+    { R"(\\tlpsl\.exe$)", {{
+      { "d3d9.deferSurfaceCreation",        "True" },
+    }} },
     /* Ninja Gaiden Sigma 1/2                    */
     { R"(\\NINJA GAIDEN SIGMA(2)?\.exe$)", {{
       { "d3d9.deferSurfaceCreation",        "True" },
@@ -1134,6 +1138,13 @@ namespace dxvk {
      * Broken character model motion at high FPS  */
     { R"(\\Chrome(Single|Net)\.exe$)", {{
       { "d3d9.maxFrameRate",                  "60" },
+    }} },
+    /* Rayman 3: Hoodlum Havoc                    *
+     * Missing geometry and textures without      *
+     * legacy DISCARD behavior                    */
+    { R"(\\Rayman3\.exe$)", {{
+      { "d3d9.allowDirectBufferMapping",   "False" },
+      { "d3d8.forceLegacyDiscard",          "True" },
     }} },
   }};
 

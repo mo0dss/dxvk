@@ -22,7 +22,6 @@
 #include "../dxso/dxso_options.h"
 #include "../dxso/dxso_modinfo.h"
 
-#include "d3d9_sampler.h"
 #include "d3d9_fixed_function.h"
 #include "d3d9_swvp_emu.h"
 
@@ -918,6 +917,8 @@ namespace dxvk {
 
     void PrepareDraw(D3DPRIMITIVETYPE PrimitiveType, bool UploadVBOs, bool UploadIBOs);
 
+    void EnsureSamplerLimit();
+
     template <DxsoProgramType ShaderStage>
     void BindShader(
       const D3D9CommonShader*                 pShaderModule);
@@ -979,10 +980,6 @@ namespace dxvk {
 
     HRESULT InitialReset(D3DPRESENT_PARAMETERS* pPresentationParameters, D3DDISPLAYMODEEX* pFullscreenDisplayMode);
 
-    UINT GetSamplerCount() const {
-      return m_samplerCount.load();
-    }
-
     D3D9MemoryAllocator* GetAllocator() {
       return &m_memoryAllocator;
     }
@@ -1040,6 +1037,19 @@ namespace dxvk {
 
     UINT GetSWVPShaderCount() const {
       return m_swvpEmulator.GetShaderCount();
+    }
+
+    void InjectCsChunk(
+            DxvkCsChunkRef&&            Chunk,
+            bool                        Synchronize);
+
+    template<typename Fn>
+    void InjectCs(
+            Fn&&                        Command) {
+      auto chunk = AllocCsChunk();
+      chunk->push(std::move(Command));
+
+      InjectCsChunk(std::move(chunk), false);
     }
 
   private:
@@ -1344,12 +1354,6 @@ namespace dxvk {
     DxsoOptions                     m_dxsoOptions;
 
     std::unordered_map<
-      D3D9SamplerKey,
-      Rc<DxvkSampler>,
-      D3D9SamplerKeyHash,
-      D3D9SamplerKeyEq>             m_samplers;
-
-    std::unordered_map<
       DWORD,
       Com<D3D9VertexDecl,
       false>>                       m_fvfTable;
@@ -1451,7 +1455,6 @@ namespace dxvk {
     GpuFlushTracker                 m_flushTracker;
 
     std::atomic<int64_t>            m_availableMemory = { 0 };
-    std::atomic<int32_t>            m_samplerCount    = { 0 };
 
     D3D9DeviceLostState             m_deviceLostState          = D3D9DeviceLostState::Ok;
     HWND                            m_fullscreenWindow         = NULL;
@@ -1470,6 +1473,19 @@ namespace dxvk {
     D3D9VkInteropDevice             m_d3d9Interop;
     D3D9On12                        m_d3d9On12;
     DxvkD3D8Bridge                  m_d3d8Bridge;
+
+    // Sampler statistics
+    constexpr static uint32_t       SamplerCountBits = 12u;
+    constexpr static uint64_t       SamplerCountMask = (1u << SamplerCountBits) - 1u;
+
+    uint64_t                        m_samplerBindCount = 0u;
+
+    uint64_t                        m_lastSamplerLiveCount = 0u;
+    uint64_t                        m_lastSamplerBindCount = 0u;
+
+    // Written by CS thread
+    alignas(CACHE_LINE_SIZE)
+    std::atomic<uint64_t>           m_lastSamplerStats = { 0u };
   };
 
 }

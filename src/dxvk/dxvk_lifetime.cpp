@@ -6,13 +6,10 @@ namespace dxvk {
   DxvkLifetimeTracker::~DxvkLifetimeTracker() { }
   
   
-  void DxvkLifetimeTracker::notify() {
-    m_resources.clear();
-  }
-
-
   void DxvkLifetimeTracker::reset() {
     m_resources.clear();
+    m_allocations.clear();
+    m_samplers.clear();
   }
   
 }
