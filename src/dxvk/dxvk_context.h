@@ -6,9 +6,7 @@
 #include "dxvk_context_state.h"
 #include "dxvk_objects.h"
 #include "dxvk_queue.h"
-#include "dxvk_resource.h"
 #include "dxvk_util.h"
-#include "dxvk_marker.h"
 
 namespace dxvk {
 
@@ -101,14 +99,14 @@ namespace dxvk {
      * \param [in] query The query to end
      */
     void beginQuery(
-      const Rc<DxvkGpuQuery>&   query);
+      const Rc<DxvkQuery>&      query);
     
     /**
      * \brief Ends generating query data
      * \param [in] query The query to end
      */
     void endQuery(
-      const Rc<DxvkGpuQuery>&   query);
+      const Rc<DxvkQuery>&      query);
     
     /**
      * \brief Sets render targets
@@ -120,8 +118,15 @@ namespace dxvk {
     void bindRenderTargets(
             DxvkRenderTargets&&   targets,
             VkImageAspectFlags    feedbackLoop) {
-      // Set up default render pass ops
+      // Set up default render pass ops and normalize layouts
       m_state.om.renderTargets = std::move(targets);
+
+      for (uint32_t i = 0; i < MaxNumRenderTargets; i++) {
+        auto& rt = m_state.om.renderTargets.color[i];
+
+        if (rt.view)
+          rt.layout = rt.view->pickLayout(rt.layout);
+      }
 
       if (unlikely(m_state.gp.state.om.feedbackLoop() != feedbackLoop)) {
         m_state.gp.state.om.setFeedbackLoop(feedbackLoop);
@@ -1094,20 +1099,21 @@ namespace dxvk {
     /**
      * \brief Uses transfer queue to initialize image
      * 
-     * Only safe to use if the image is not in use by the GPU. Data is
-     * assumed to be tightly packed, with all layers of the top-level mip
-     * stored first, then the next mip etc. If the given format does not
-     * match the image format and is not \c VK_FORMAT_UNDEFINED, the data
-     * will be converted to the image format before performing the upload.
+     * Only safe to use if the image is not in use by the GPU.
+     * Data for each subresource is tightly packed, but individual
+     * subresources must be aligned to \c subresourceAlignment in
+     * order to meet Vulkan requirements when using transfer queues.
      * \param [in] image The image to initialize
      * \param [in] source Staging buffer containing data
      * \param [in] sourceOffset Offset into staging buffer
+     * \param [in] subresourceAlignment Subresource alignment
      * \param [in] format Actual data format
      */
     void uploadImage(
       const Rc<DxvkImage>&            image,
       const Rc<DxvkBuffer>&           source,
             VkDeviceSize              sourceOffset,
+            VkDeviceSize              subresourceAlignment,
             VkFormat                  format);
 
     /**
@@ -1299,14 +1305,14 @@ namespace dxvk {
      * \param [in] event The event
      */
     void signalGpuEvent(
-      const Rc<DxvkGpuEvent>&   event);
+      const Rc<DxvkEvent>&      event);
     
     /**
      * \brief Writes to a timestamp query
      * \param [in] query The timestamp query
      */
     void writeTimestamp(
-      const Rc<DxvkGpuQuery>&   query);
+      const Rc<DxvkQuery>&      query);
     
     /**
      * \brief Queues a signal
@@ -1368,15 +1374,6 @@ namespace dxvk {
     void insertDebugLabel(VkDebugUtilsLabelEXT *label);
 
     /**
-     * \brief Inserts a marker object
-     * \param [in] marker The marker
-     */
-    template<typename T>
-    void insertMarker(const Rc<DxvkMarker<T>>& marker) {
-      m_cmd->trackResource<DxvkAccess::Write>(marker);
-    }
-
-    /**
      * \brief Increments a given stat counter
      *
      * The stat counters will be merged into the global
@@ -1406,12 +1403,10 @@ namespace dxvk {
     Rc<DxvkDescriptorPool>  m_descriptorPool;
     Rc<DxvkDescriptorManager> m_descriptorManager;
 
-    DxvkBarrierSet          m_sdmaAcquires;
-    DxvkBarrierSet          m_sdmaBarriers;
-    DxvkBarrierSet          m_initAcquires;
-    DxvkBarrierSet          m_initBarriers;
-    DxvkBarrierSet          m_execAcquires;
-    DxvkBarrierSet          m_execBarriers;
+    DxvkBarrierBatch        m_sdmaBarriers;
+    DxvkBarrierBatch        m_initBarriers;
+    DxvkBarrierBatch        m_execBarriers;
+    DxvkBarrierTracker      m_barrierTracker;
     DxvkBarrierControlFlags m_barrierControl;
 
     DxvkGpuQueryManager     m_queryManager;
@@ -1432,6 +1427,8 @@ namespace dxvk {
     std::array<DxvkShaderResourceSlot, MaxNumResourceSlots>  m_rc;
     std::array<DxvkGraphicsPipeline*, 4096> m_gpLookupCache = { };
     std::array<DxvkComputePipeline*,   256> m_cpLookupCache = { };
+
+    std::vector<VkImageMemoryBarrier2> m_imageLayoutTransitions;
 
     void blitImageFb(
             Rc<DxvkImageView>     dstView,
@@ -1490,7 +1487,7 @@ namespace dxvk {
             VkOffset3D            imageOffset,
             VkExtent3D            imageExtent);
 
-    void copyImageToBufferFb(
+    void copyImageToBufferCs(
       const Rc<DxvkBuffer>&       buffer,
             VkDeviceSize          bufferOffset,
             VkDeviceSize          bufferRowAlignment,
@@ -1588,11 +1585,13 @@ namespace dxvk {
       const Rc<DxvkImage>&            image,
       const Rc<DxvkBuffer>&           source,
             VkDeviceSize              sourceOffset,
+            VkDeviceSize              subresourceAlignment,
             VkFormat                  format);
 
     void uploadImageHw(
       const Rc<DxvkImage>&            image,
       const Rc<DxvkBuffer>&           source,
+            VkDeviceSize              subresourceAlignment,
             VkDeviceSize              sourceOffset);
 
     void performClear(
@@ -1778,6 +1777,157 @@ namespace dxvk {
     void endCurrentCommands();
 
     void splitCommands();
+
+    void flushImageLayoutTransitions(
+            DxvkCmdBuffer             cmdBuffer);
+
+    void addImageLayoutTransition(
+            DxvkImage&                image,
+      const VkImageSubresourceRange&  subresources,
+            VkImageLayout             srcLayout,
+            VkPipelineStageFlags2     srcStages,
+            VkAccessFlags2            srcAccess,
+            VkImageLayout             dstLayout,
+            VkPipelineStageFlags2     dstStages,
+            VkAccessFlags2            dstAccess);
+
+    void addImageLayoutTransition(
+            DxvkImage&                image,
+      const VkImageSubresourceRange&  subresources,
+            VkImageLayout             dstLayout,
+            VkPipelineStageFlags2     dstStages,
+            VkAccessFlags2            dstAccess,
+            bool                      discard);
+
+    void addImageInitTransition(
+            DxvkImage&                image,
+      const VkImageSubresourceRange&  subresources,
+            VkImageLayout             dstLayout,
+            VkPipelineStageFlags2     dstStages,
+            VkAccessFlags2            dstAccess);
+
+    void accessMemory(
+            DxvkCmdBuffer             cmdBuffer,
+            VkPipelineStageFlags2     srcStages,
+            VkAccessFlags2            srcAccess,
+            VkPipelineStageFlags2     dstStages,
+            VkAccessFlags2            dstAccess);
+
+    void accessImage(
+            DxvkCmdBuffer             cmdBuffer,
+            DxvkImage&                image,
+      const VkImageSubresourceRange&  subresources,
+            VkImageLayout             srcLayout,
+            VkPipelineStageFlags2     srcStages,
+            VkAccessFlags2            srcAccess);
+
+    void accessImage(
+            DxvkCmdBuffer             cmdBuffer,
+            DxvkImage&                image,
+      const VkImageSubresourceRange&  subresources,
+            VkImageLayout             srcLayout,
+            VkPipelineStageFlags2     srcStages,
+            VkAccessFlags2            srcAccess,
+            VkImageLayout             dstLayout,
+            VkPipelineStageFlags2     dstStages,
+            VkAccessFlags2            dstAccess);
+
+    void accessBuffer(
+            DxvkCmdBuffer             cmdBuffer,
+            DxvkBuffer&               buffer,
+            VkDeviceSize              offset,
+            VkDeviceSize              size,
+            VkPipelineStageFlags2     srcStages,
+            VkAccessFlags2            srcAccess);
+
+    void accessBuffer(
+            DxvkCmdBuffer             cmdBuffer,
+            DxvkBuffer&               buffer,
+            VkDeviceSize              offset,
+            VkDeviceSize              size,
+            VkPipelineStageFlags2     srcStages,
+            VkAccessFlags2            srcAccess,
+            VkPipelineStageFlags2     dstStages,
+            VkAccessFlags2            dstAccess);
+
+    void accessBuffer(
+            DxvkCmdBuffer             cmdBuffer,
+            DxvkBufferView&           bufferView,
+            VkPipelineStageFlags2     srcStages,
+            VkAccessFlags2            srcAccess);
+
+    void accessBuffer(
+            DxvkCmdBuffer             cmdBuffer,
+            DxvkBufferView&           bufferView,
+            VkPipelineStageFlags2     srcStages,
+            VkAccessFlags2            srcAccess,
+            VkPipelineStageFlags2     dstStages,
+            VkAccessFlags2            dstAccess);
+
+    void flushPendingAccesses(
+            DxvkBuffer&               buffer,
+            VkDeviceSize              offset,
+            VkDeviceSize              size,
+            DxvkAccess                access);
+
+    void flushPendingAccesses(
+            DxvkBufferView&           bufferView,
+            DxvkAccess                access);
+
+    void flushPendingAccesses(
+            DxvkImage&                image,
+      const VkImageSubresourceRange&  subresources,
+            DxvkAccess                access);
+
+    void flushPendingAccesses(
+            DxvkImageView&            imageView,
+            DxvkAccess                access);
+
+    void flushBarriers();
+
+    bool resourceHasAccess(
+            DxvkBuffer&               buffer,
+            VkDeviceSize              offset,
+            VkDeviceSize              size,
+            DxvkAccess                access);
+
+    bool resourceHasAccess(
+            DxvkBufferView&           bufferView,
+            DxvkAccess                access);
+
+    bool resourceHasAccess(
+            DxvkImage&                image,
+      const VkImageSubresourceRange&  subresources,
+            DxvkAccess                access);
+
+    bool resourceHasAccess(
+            DxvkImageView&            imageView,
+            DxvkAccess                access);
+
+    DxvkBarrierBatch& getBarrierBatch(
+            DxvkCmdBuffer             cmdBuffer);
+
+    template<typename Pred>
+    bool checkResourceBarrier(
+      const Pred&                     pred,
+            VkPipelineStageFlags      stages,
+            VkAccessFlags             access) {
+      // Check for read-after-write first, this is common
+      bool hasPendingWrite = pred(DxvkAccess::Write);
+
+      if (access & vk::AccessReadMask)
+        return hasPendingWrite;
+
+      // Check for a write-after-write hazard, but
+      // ignore it if there are no reads involved.
+      bool ignoreWaW = canIgnoreWawHazards(stages);
+
+      if (hasPendingWrite && !ignoreWaW)
+        return true;
+
+      // Check whether there are any pending reads.
+      return pred(DxvkAccess::Read);
+    }
 
     static bool formatsAreCopyCompatible(
             VkFormat                  imageFormat,

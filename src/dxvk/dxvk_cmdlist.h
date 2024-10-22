@@ -9,7 +9,6 @@
 #include "dxvk_gpu_event.h"
 #include "dxvk_gpu_query.h"
 #include "dxvk_graphics.h"
-#include "dxvk_lifetime.h"
 #include "dxvk_limits.h"
 #include "dxvk_pipelayout.h"
 #include "dxvk_presenter.h"
@@ -19,6 +18,26 @@
 
 namespace dxvk {
   
+  /**
+   * \brief Timeline semaphore pair
+   *
+   * One semaphore for each queue.
+   */
+  struct DxvkTimelineSemaphores {
+    VkSemaphore graphics = VK_NULL_HANDLE;
+    VkSemaphore transfer = VK_NULL_HANDLE;
+  };
+
+
+  /**
+   * \brief Timeline semaphore values
+   */
+  struct DxvkTimelineSemaphoreValues {
+    uint64_t graphics = 0u;
+    uint64_t transfer = 0u;
+  };
+
+
   /**
    * \brief Command buffer flags
    * 
@@ -196,9 +215,14 @@ namespace dxvk {
     
     /**
      * \brief Submits command list
+     *
+     * \param [in] semaphores Timeline semaphore pair
+     * \param [in] timelines Timeline semaphore values
      * \returns Submission status
      */
-    VkResult submit();
+    VkResult submit(
+      const DxvkTimelineSemaphores&       semaphores,
+            DxvkTimelineSemaphoreValues&  timelines);
     
     /**
      * \brief Stat counters
@@ -248,64 +272,41 @@ namespace dxvk {
     void next();
     
     /**
-     * \brief Adds a resource to track
-     * 
-     * Adds a resource to the internal resource tracker.
-     * Resources will be kept alive and "in use" until
-     * the device can guarantee that the submission has
-     * completed.
+     * \brief Tracks an object
+     *
+     * Keeps the object alive until the command list finishes
+     * execution on the GPU.
+     * \param [in] object Object to track
      */
-    template<DxvkAccess Access>
-    void trackResource(Rc<DxvkResourceAllocation>&& rc) {
-      m_resources.trackResource(DxvkLifetime<DxvkResourceAllocation>(std::move(rc), Access));
-    }
-
-    template<DxvkAccess Access>
-    void trackResource(const Rc<DxvkResourceAllocation>& rc) {
-      m_resources.trackResource(DxvkLifetime<DxvkResourceAllocation>(rc.ptr(), Access));
-    }
-
-    template<DxvkAccess Access, typename T>
-    void trackResource(Rc<T>&& rc) {
-      m_resources.trackResource(DxvkLifetime<DxvkResource>(std::move(rc), Access));
-    }
-
-    template<DxvkAccess Access, typename T>
-    void trackResource(const Rc<T>& rc) {
-      m_resources.trackResource(DxvkLifetime<DxvkResource>(rc.ptr(), Access));
-    }
-
-    template<DxvkAccess Access, typename T>
-    void trackResource(T* rc) {
-      m_resources.trackResource(DxvkLifetime<DxvkResource>(rc, Access));
-    }
-
-    void trackSampler(const Rc<DxvkSampler>& sampler) {
-      m_resources.trackSampler(sampler);
+    template<typename T>
+    void track(Rc<T> object) {
+      m_objectTracker.track<DxvkObjectRef<T>>(std::move(object));
     }
 
     /**
-     * \brief Tracks a GPU event
-     * 
-     * The event will be returned to its event pool
-     * after the command buffer has finished executing.
-     * \param [in] handle Event handle
+     * \brief Tracks a resource with access mode
+     *
+     * Keeps the object alive and tracks resource access for
+     * the purpoe of CPU access synchronization. The different
+     * overloads try to reduce atomic operations.
+     * \param [in] object Object to track
+     * \param [in] access Resource access mode
      */
-    void trackGpuEvent(DxvkGpuEventHandle handle) {
-      m_gpuEventTracker.trackEvent(handle);
+    template<typename T>
+    void track(Rc<T>&& object, DxvkAccess access) {
+      m_objectTracker.track<DxvkResourceRef>(std::move(object), access);
     }
-    
-    /**
-     * \brief Tracks a GPU query
-     * 
-     * The query handle will be returned to its allocator
-     * after the command buffer has finished executing.
-     * \param [in] handle Event handle
-     */
-    void trackGpuQuery(DxvkGpuQueryHandle handle) {
-      m_gpuQueryTracker.trackQuery(handle);
+
+    template<typename T>
+    void track(const Rc<T>& object, DxvkAccess access) {
+      m_objectTracker.track<DxvkResourceRef>(object.ptr(), access);
     }
-    
+
+    template<typename T>
+    void track(T* object, DxvkAccess access) {
+      m_objectTracker.track<DxvkResourceRef>(object, access);
+    }
+
     /**
      * \brief Tracks a graphics pipeline
      * \param [in] pipeline Pipeline
@@ -331,7 +332,7 @@ namespace dxvk {
      * \brief Notifies resources and signals
      */
     void notifyObjects() {
-      m_resources.reset();
+      m_objectTracker.clear();
       m_signalTracker.notify();
     }
 
@@ -364,12 +365,6 @@ namespace dxvk {
     void setWsiSemaphores(const PresenterSync& wsiSemaphores) {
       m_wsiSemaphores = wsiSemaphores;
     }
-
-    /**
-     * \brief Synchronizes with command list fence
-     * \returns Return value of vkWaitForFences call
-     */
-    VkResult synchronizeFence();
 
     /**
      * \brief Resets the command list
@@ -1071,19 +1066,12 @@ namespace dxvk {
     Rc<DxvkCommandPool>       m_graphicsPool;
     Rc<DxvkCommandPool>       m_transferPool;
 
-    VkSemaphore               m_bindSemaphore = VK_NULL_HANDLE;
-    VkSemaphore               m_postSemaphore = VK_NULL_HANDLE;
-    VkSemaphore               m_sdmaSemaphore = VK_NULL_HANDLE;
-    VkFence                   m_fence         = VK_NULL_HANDLE;
-
     DxvkCommandSubmissionInfo m_cmd;
 
     PresenterSync             m_wsiSemaphores = { };
 
-    DxvkLifetimeTracker       m_resources;
+    DxvkObjectTracker         m_objectTracker;
     DxvkSignalTracker         m_signalTracker;
-    DxvkGpuEventTracker       m_gpuEventTracker;
-    DxvkGpuQueryTracker       m_gpuQueryTracker;
     DxvkStatCounters          m_statCounters;
 
     DxvkCommandSubmission     m_commandSubmission;

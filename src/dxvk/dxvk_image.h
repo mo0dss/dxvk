@@ -3,7 +3,6 @@
 #include "dxvk_descriptor.h"
 #include "dxvk_format.h"
 #include "dxvk_memory.h"
-#include "dxvk_resource.h"
 #include "dxvk_sparse.h"
 #include "dxvk_util.h"
 
@@ -522,7 +521,7 @@ namespace dxvk {
      * The returned image can be used as backing storage.
      * \returns New underlying image resource
      */
-    Rc<DxvkResourceAllocation> createResource();
+    Rc<DxvkResourceAllocation> allocateStorage();
 
     /**
      * \brief Creates image resource with extra usage
@@ -532,7 +531,7 @@ namespace dxvk {
      * \param [in] usage Usage flags to add
      * \returns New underlying image resource
      */
-    Rc<DxvkResourceAllocation> createResourceWithUsage(
+    Rc<DxvkResourceAllocation> allocateStorageWithUsage(
       const DxvkImageUsageInfo&       usage);
 
     /**
@@ -542,7 +541,7 @@ namespace dxvk {
      * \param [in] resource New backing storage
      * \returns Previous backing storage
      */
-    Rc<DxvkResourceAllocation> assignResource(
+    Rc<DxvkResourceAllocation> assignStorage(
             Rc<DxvkResourceAllocation>&& resource);
 
     /**
@@ -553,7 +552,7 @@ namespace dxvk {
      * \param [in] usageInfo Added usage info
      * \returns Previous backing storage
      */
-    Rc<DxvkResourceAllocation> assignResourceWithUsage(
+    Rc<DxvkResourceAllocation> assignStorageWithUsage(
             Rc<DxvkResourceAllocation>&& resource,
       const DxvkImageUsageInfo&         usageInfo);
 
@@ -561,8 +560,17 @@ namespace dxvk {
      * \brief Retrieves current backing storage
      * \returns Backing storage for this image
      */
-    Rc<DxvkResourceAllocation> getAllocation() const {
+    Rc<DxvkResourceAllocation> storage() const {
       return m_storage;
+    }
+
+    /**
+     * \brief Retrieves resource ID for barrier tracking
+     * \returns Unique resource ID
+     */
+    uint64_t getResourceId() const {
+      constexpr static size_t Align = alignof(DxvkResourceAllocation);
+      return reinterpret_cast<uintptr_t>(m_storage.ptr()) / (Align & -Align);
     }
 
     /**
@@ -573,6 +581,25 @@ namespace dxvk {
      */
     Rc<DxvkImageView> createView(
       const DxvkImageViewKey& info);
+
+    /**
+     * \brief Tracks subresource initialization
+     *
+     * Initialization happens when transitioning the image
+     * away from \c PREINITIALIZED or \c UNDEFINED layouts.
+     * \param [in] subresources Subresource range
+     */
+    void trackInitialization(
+      const VkImageSubresourceRange& subresources);
+
+    /**
+     * \brief Checks whether subresources are initialized
+     *
+     * \param [in] subresources Subresource range
+     * \returns \c true if the subresources are initialized
+     */
+    bool isInitialized(
+      const VkImageSubresourceRange& subresources) const;
 
   private:
 
@@ -592,6 +619,8 @@ namespace dxvk {
     Rc<DxvkResourceAllocation>  m_storage     = nullptr;
 
     small_vector<VkFormat, 4>   m_viewFormats;
+    small_vector<uint16_t, 8>   m_uninitializedMipsPerLayer = { };
+    uint32_t                    m_uninitializedSubresourceCount = 0u;
 
     dxvk::mutex                 m_viewMutex;
     std::unordered_map<DxvkImageViewKey,

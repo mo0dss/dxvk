@@ -24,7 +24,6 @@
 #include "dxvk_sparse.h"
 #include "dxvk_stats.h"
 #include "dxvk_unbound.h"
-#include "dxvk_marker.h"
 
 namespace dxvk {
   
@@ -288,7 +287,7 @@ namespace dxvk {
      * \brief Creates a GPU event
      * \returns New GPU event
      */
-    Rc<DxvkGpuEvent> createGpuEvent();
+    Rc<DxvkEvent> createGpuEvent();
 
     /**
      * \brief Creates a query
@@ -298,11 +297,20 @@ namespace dxvk {
      * \param [in] index Query index
      * \returns New query
      */
-    Rc<DxvkGpuQuery> createGpuQuery(
+    Rc<DxvkQuery> createGpuQuery(
             VkQueryType           type,
             VkQueryControlFlags   flags,
             uint32_t              index);
-    
+
+    /**
+     * \brief Creates a raw GPU query
+     *
+     * \param [in] type Query type
+     * \returns New query
+     */
+    Rc<DxvkGpuQuery> createRawQuery(
+            VkQueryType           type);
+
     /**
      * \brief Creates new fence
      *
@@ -530,7 +538,7 @@ namespace dxvk {
      * \param [in] resource Resource to wait for
      * \param [in] access Access mode to check
      */
-    void waitForResource(const Rc<DxvkResource>& resource, DxvkAccess access);
+    void waitForResource(const DxvkPagedResource& resource, DxvkAccess access);
     
     /**
      * \brief Waits until the device becomes idle

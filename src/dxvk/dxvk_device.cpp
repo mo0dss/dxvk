@@ -138,16 +138,22 @@ namespace dxvk {
   }
 
 
-  Rc<DxvkGpuEvent> DxvkDevice::createGpuEvent() {
-    return new DxvkGpuEvent(m_vkd);
+  Rc<DxvkEvent> DxvkDevice::createGpuEvent() {
+    return new DxvkEvent(this);
   }
 
 
-  Rc<DxvkGpuQuery> DxvkDevice::createGpuQuery(
+  Rc<DxvkQuery> DxvkDevice::createGpuQuery(
           VkQueryType           type,
           VkQueryControlFlags   flags,
           uint32_t              index) {
-    return new DxvkGpuQuery(m_vkd, type, flags, index);
+    return new DxvkQuery(this, type, flags, index);
+  }
+
+
+  Rc<DxvkGpuQuery> DxvkDevice::createRawQuery(
+          VkQueryType           type) {
+    return m_objects.queryPool().allocQuery(type);
   }
 
 
@@ -294,12 +300,12 @@ namespace dxvk {
   }
 
 
-  void DxvkDevice::waitForResource(const Rc<DxvkResource>& resource, DxvkAccess access) {
-    if (resource->isInUse(access)) {
+  void DxvkDevice::waitForResource(const DxvkPagedResource& resource, DxvkAccess access) {
+    if (resource.isInUse(access)) {
       auto t0 = dxvk::high_resolution_clock::now();
 
-      m_submissionQueue.synchronizeUntil([resource, access] {
-        return !resource->isInUse(access);
+      m_submissionQueue.synchronizeUntil([&resource, access] {
+        return !resource.isInUse(access);
       });
 
       auto t1 = dxvk::high_resolution_clock::now();

@@ -50,6 +50,7 @@ namespace dxvk {
     , m_shaderAllocator ( )
     , m_shaderModules   ( new D3D9ShaderModuleSet )
     , m_stagingBuffer   ( dxvkDevice, StagingBufferSize )
+    , m_stagingBufferFence(new sync::Fence())
     , m_d3d9Options     ( dxvkDevice, pParent->GetInstance()->config() )
     , m_multithread     ( BehaviorFlags & D3DCREATE_MULTITHREADED )
     , m_isSWVP          ( (BehaviorFlags & D3DCREATE_SOFTWARE_VERTEXPROCESSING) ? true : false )
@@ -71,7 +72,7 @@ namespace dxvk {
     if (m_dxvkDevice->instance()->extensions().extDebugUtils)
       m_annotation = new D3D9UserDefinedAnnotation(this);
 
-    m_initializer      = new D3D9Initializer(m_dxvkDevice);
+    m_initializer      = new D3D9Initializer(this);
     m_converter        = new D3D9FormatHelper(m_dxvkDevice);
 
     EmitCs([
@@ -181,8 +182,6 @@ namespace dxvk {
     m_flags.set(D3D9DeviceFlag::DirtySpecializationEntries);
 
     // Bitfields can't be initialized in header.
-    m_boundRTs = 0;
-    m_anyColorWrites = 0;
     m_activeRTsWhichAreTextures = 0;
     m_alphaSwizzleRTs = 0;
     m_lastHazardsRT = 0;
@@ -350,6 +349,11 @@ namespace dxvk {
      || (inputHeight && (inputHeight & (inputHeight - 1))))
       return D3DERR_INVALIDCALL;
 
+    // It makes no sense to have a hotspot outside of the bitmap.
+    if (XHotSpot > std::max(inputWidth  - 1, 0u)
+     || YHotSpot > std::max(inputHeight - 1, 0u))
+      return D3DERR_INVALIDCALL;
+
     D3DPRESENT_PARAMETERS params;
     m_implicitSwapchain->GetPresentParameters(&params);
 
@@ -387,55 +391,17 @@ namespace dxvk {
       // Set this as our cursor.
       return m_cursor.SetHardwareCursor(XHotSpot, YHotSpot, bitmap);
     } else {
-      // The cursor bitmap passed by the application has the potential
-      // to not be clipped to the correct dimensions, so we need to
-      // discard any transparent edges and keep only a tight rectangle
-      // bounded by the cursor's visible edge pixels
-      uint32_t leftEdge   = inputWidth * HardwareCursorFormatSize;
-      uint32_t topEdge    = inputHeight;
-      uint32_t rightEdge  = 0;
-      uint32_t bottomEdge = 0;
+      size_t copyPitch = inputWidth * HardwareCursorFormatSize;
+      std::vector<uint8_t> bitmap(inputHeight * copyPitch, 0);
 
-      uint32_t rowPitch = inputWidth * HardwareCursorFormatSize;
-
-      for (uint32_t h = 0; h < inputHeight; h++) {
-        uint32_t rowOffset = h * rowPitch;
-        for (uint32_t w = 0; w < rowPitch; w += HardwareCursorFormatSize) {
-          // Examine only pixels with non-zero alpha
-          if (data[rowOffset + w + 3] != 0) {
-            if (leftEdge > w) leftEdge = w;
-            if (topEdge > h) topEdge = h;
-            if (rightEdge < w) rightEdge = w;
-            if (bottomEdge < h) bottomEdge = h;
-          }
-        }
-      }
-      leftEdge  /= HardwareCursorFormatSize;
-      rightEdge /= HardwareCursorFormatSize;
-
-      if (leftEdge > rightEdge || topEdge > bottomEdge) {
-        UnlockImage(cursorTex, 0, 0);
-
-        return D3DERR_INVALIDCALL;
-      }
-
-      // Calculate clipped bitmap dimensions
-      uint32_t clippedInputWidth  = rightEdge  + 1 - leftEdge + 1;
-      uint32_t clippedInputHeight = bottomEdge + 1 - topEdge  + 1;
-      // Windows works with a stride of 128, lets respect that.
-      uint32_t clippedCopyPitch = clippedInputWidth * HardwareCursorFormatSize;
-
-      std::vector<uint8_t> clippedBitmap(clippedInputHeight * clippedCopyPitch, 0);
-
-      for (uint32_t h = 0; h < clippedInputHeight; h++)
-        std::memcpy(&clippedBitmap[h * clippedCopyPitch],
-                    &data[(h + topEdge) * lockedBox.RowPitch + leftEdge * HardwareCursorFormatSize], clippedCopyPitch);
+      for (uint32_t h = 0; h < inputHeight; h++)
+        std::memcpy(&bitmap[h * copyPitch], &data[h * lockedBox.RowPitch], copyPitch);
 
       UnlockImage(cursorTex, 0, 0);
 
-      m_implicitSwapchain->SetCursorTexture(clippedInputWidth, clippedInputHeight, &clippedBitmap[0]);
+      m_implicitSwapchain->SetCursorTexture(inputWidth, inputHeight, &bitmap[0]);
 
-      return m_cursor.SetSoftwareCursor(clippedInputWidth, clippedInputHeight, XHotSpot, YHotSpot);
+      return m_cursor.SetSoftwareCursor(inputWidth, inputHeight, XHotSpot, YHotSpot);
     }
 
     return D3D_OK;
@@ -1601,7 +1567,6 @@ namespace dxvk {
 
     m_state.renderTargets[RenderTargetIndex] = rt;
 
-    UpdateBoundRTs(RenderTargetIndex);
     UpdateActiveRTs(RenderTargetIndex);
 
     uint32_t originalAlphaSwizzleRTs = m_alphaSwizzleRTs;
@@ -1876,7 +1841,9 @@ namespace dxvk {
 
       // Clear render targets if we need to.
       if (Flags & D3DCLEAR_TARGET) {
-        for (uint32_t rt : bit::BitMask(m_boundRTs)) {
+        for (uint32_t rt = 0u; rt < m_state.renderTargets.size(); rt++) {
+          if (!HasRenderTargetBound(rt))
+            continue;
           const auto& rts = m_state.renderTargets[rt];
           const auto& rtv = rts->GetRenderTargetView(srgb);
 
@@ -2255,22 +2222,22 @@ namespace dxvk {
 
         case D3DRS_COLORWRITEENABLE:
           if (likely(!old != !Value))
-            UpdateAnyColorWrites<0>(!!Value);
+            UpdateAnyColorWrites<0>();
           m_flags.set(D3D9DeviceFlag::DirtyBlendState);
           break;
         case D3DRS_COLORWRITEENABLE1:
           if (likely(!old != !Value))
-            UpdateAnyColorWrites<1>(!!Value);
+            UpdateAnyColorWrites<1>();
           m_flags.set(D3D9DeviceFlag::DirtyBlendState);
           break;
         case D3DRS_COLORWRITEENABLE2:
           if (likely(!old != !Value))
-            UpdateAnyColorWrites<2>(!!Value);
+            UpdateAnyColorWrites<2>();
           m_flags.set(D3D9DeviceFlag::DirtyBlendState);
           break;
         case D3DRS_COLORWRITEENABLE3:
           if (likely(!old != !Value))
-            UpdateAnyColorWrites<3>(!!Value);
+            UpdateAnyColorWrites<3>();
           m_flags.set(D3D9DeviceFlag::DirtyBlendState);
           break;
 
@@ -2461,6 +2428,9 @@ namespace dxvk {
             m_flags.set(D3D9DeviceFlag::DirtyFFVertexBlend);
 
           m_flags.set(D3D9DeviceFlag::DirtyFFVertexShader);
+          break;
+
+        case D3DRS_ADAPTIVETESS_Y:
           break;
 
         case D3DRS_ADAPTIVETESS_X:
@@ -3648,8 +3618,15 @@ namespace dxvk {
     // If we have any RTs we would have bound to the the FB
     // not in the new shader mask, mark the framebuffer as dirty
     // so we unbind them.
-    uint32_t oldUseMask = m_boundRTs & m_anyColorWrites & m_psShaderMasks.rtMask;
-    uint32_t newUseMask = m_boundRTs & m_anyColorWrites & newShaderMasks.rtMask;
+    uint32_t boundMask = 0u;
+    uint32_t anyColorWriteMask = 0u;
+    for (uint32_t i = 0u; i < m_state.renderTargets.size(); i++) {
+      boundMask |= HasRenderTargetBound(i) << i;
+      anyColorWriteMask |= (m_state.renderStates[ColorWriteIndex(i)] != 0) << i;
+    }
+
+    uint32_t oldUseMask = boundMask & anyColorWriteMask & m_psShaderMasks.rtMask;
+    uint32_t newUseMask = boundMask & anyColorWriteMask & newShaderMasks.rtMask;
     if (oldUseMask != newUseMask)
       m_flags.set(D3D9DeviceFlag::DirtyFramebuffer);
 
@@ -3929,6 +3906,8 @@ namespace dxvk {
       if (unlikely(pSoftwareCursor->ResetCursor)) {
         pSoftwareCursor->Width = 0;
         pSoftwareCursor->Height = 0;
+        pSoftwareCursor->XHotSpot = 0;
+        pSoftwareCursor->YHotSpot = 0;
         pSoftwareCursor->X = 0;
         pSoftwareCursor->Y = 0;
         pSoftwareCursor->ResetCursor = false;
@@ -4498,7 +4477,7 @@ namespace dxvk {
     VkDeviceSize alignedSize = align(size, CACHE_LINE_SIZE);
 
     if (unlikely(m_upBufferOffset + alignedSize > UPBufferSize)) {
-      auto slice = m_upBuffer->allocateSlice();
+      auto slice = m_upBuffer->allocateStorage();
 
       m_upBufferOffset = 0;
       m_upBufferMapPtr = slice->mapPtr();
@@ -4521,8 +4500,6 @@ namespace dxvk {
 
 
   D3D9BufferSlice D3D9DeviceEx::AllocStagingBuffer(VkDeviceSize size) {
-    m_stagingBufferAllocated += size;
-
     D3D9BufferSlice result;
     result.slice = m_stagingBuffer.alloc(size);
     result.mapPtr = result.slice.mapPtr(0);
@@ -4530,79 +4507,34 @@ namespace dxvk {
   }
 
 
-  void D3D9DeviceEx::EmitStagingBufferMarker() {
-    if (m_stagingBufferLastAllocated == m_stagingBufferAllocated)
-      return;
-
-    D3D9StagingBufferMarkerPayload payload;
-    payload.sequenceNumber = GetCurrentSequenceNumber();
-    payload.allocated = m_stagingBufferAllocated;
-    m_stagingBufferLastAllocated = m_stagingBufferAllocated;
-
-    Rc<D3D9StagingBufferMarker> marker = new D3D9StagingBufferMarker(payload);
-    m_stagingBufferMarkers.push(marker);
-
-    EmitCs([
-      cMarker = std::move(marker)
-    ] (DxvkContext* ctx) {
-      ctx->insertMarker(cMarker);
-    });
-  }
-
-
   void D3D9DeviceEx::WaitStagingBuffer() {
-    // The number below is not a hard limit, however we can be reasonably
-    // sure that there will never be more than two additional staging buffers
-    // in flight in addition to the number of staging buffers specified here.
-    constexpr VkDeviceSize maxStagingMemoryInFlight = env::is32BitHostPlatform()
+    // Treshold for staging memory in flight. Since the staging buffer granularity
+    // is somewhat coars, it is possible for one additional allocation to be in use,
+    // but otherwise this is a hard upper bound.
+    constexpr VkDeviceSize MaxStagingMemoryInFlight = env::is32BitHostPlatform()
       ? StagingBufferSize * 4
       : StagingBufferSize * 16;
 
-    // If the game uploads a significant amount of data at once, it's
-    // possible that we exceed the limit while the queue is empty. In
-    // that case, enforce a flush early to populate the marker queue.
-    bool didFlush = false;
+    // Threshold at which to submit eagerly. This is useful to ensure
+    // that staging buffer memory gets recycled relatively soon.
+    constexpr VkDeviceSize MaxStagingMemoryPerSubmission = MaxStagingMemoryInFlight / 3u;
 
-    if (m_stagingBufferLastSignaled + maxStagingMemoryInFlight < m_stagingBufferAllocated
-     && m_stagingBufferMarkers.empty()) {
-      Flush();
-      didFlush = true;
+    VkDeviceSize stagingBufferAllocated = m_stagingBuffer.getStatistics().allocatedTotal;
+
+    if (stagingBufferAllocated > m_stagingMemorySignaled + MaxStagingMemoryPerSubmission) {
+      // Perform submission. If the amount of staging memory allocated since the
+      // last submission exceeds the hard limit, we need to submit to guarantee
+      // forward progress. Ideally, this should not happen very often.
+      GpuFlushType flushType = stagingBufferAllocated <= m_stagingMemorySignaled + MaxStagingMemoryInFlight
+        ? GpuFlushType::ImplicitSynchronization
+        : GpuFlushType::ExplicitFlush;
+
+      ConsiderFlush(flushType);
     }
 
-    // Process the marker queue. We'll remove as many markers as we
-    // can without stalling, and will stall until we're below the
-    // allocation limit again.
-    uint64_t lastSequenceNumber = m_csThread.lastSequenceNumber();
-
-    while (!m_stagingBufferMarkers.empty()) {
-      const auto& marker = m_stagingBufferMarkers.front();
-      const auto& payload = marker->payload();
-
-      bool needsStall = m_stagingBufferLastSignaled + maxStagingMemoryInFlight < m_stagingBufferAllocated;
-
-      if (payload.sequenceNumber > lastSequenceNumber) {
-        if (!needsStall)
-          break;
-
-        SynchronizeCsThread(payload.sequenceNumber);
-        lastSequenceNumber = payload.sequenceNumber;
-      }
-
-      if (marker->isInUse(DxvkAccess::Read)) {
-        if (!needsStall)
-          break;
-
-        if (!didFlush) {
-          Flush();
-          didFlush = true;
-        }
-
-        m_dxvkDevice->waitForResource(marker, DxvkAccess::Read);
-      }
-
-      m_stagingBufferLastSignaled = marker->payload().allocated;
-      m_stagingBufferMarkers.pop();
-    }
+    // Wait for staging memory to get recycled.
+    if (stagingBufferAllocated > MaxStagingMemoryInFlight)
+      m_stagingBufferFence->wait(stagingBufferAllocated - MaxStagingMemoryInFlight);
   }
 
 
@@ -4622,9 +4554,9 @@ namespace dxvk {
   }
 
   bool D3D9DeviceEx::WaitForResource(
-  const Rc<DxvkResource>&                 Resource,
-        uint64_t                          SequenceNumber,
-        DWORD                             MapFlags) {
+    const DxvkPagedResource&                Resource,
+          uint64_t                          SequenceNumber,
+          DWORD                             MapFlags) {
     // Wait for the any pending D3D9 command to be executed
     // on the CS thread so that we can determine whether the
     // resource is currently in use or not.
@@ -4634,10 +4566,10 @@ namespace dxvk {
       ? DxvkAccess::Write
       : DxvkAccess::Read;
 
-    if (!Resource->isInUse(access))
+    if (!Resource.isInUse(access))
       SynchronizeCsThread(SequenceNumber);
 
-    if (Resource->isInUse(access)) {
+    if (Resource.isInUse(access)) {
       if (MapFlags & D3DLOCK_DONOTWAIT) {
         // We don't have to wait, but misbehaving games may
         // still try to spin on `Map` until the resource is
@@ -4858,7 +4790,7 @@ namespace dxvk {
         TrackTextureMappingBufferSequenceNumber(pResource, Subresource);
       }
 
-      if (!WaitForResource(mappedBuffer, pResource->GetMappingBufferSequenceNumber(Subresource), Flags))
+      if (!WaitForResource(*mappedBuffer, pResource->GetMappingBufferSequenceNumber(Subresource), Flags))
         return D3DERR_WASSTILLDRAWING;
     }
 
@@ -5031,7 +4963,7 @@ namespace dxvk {
       // That means that NeedsReadback is only true if the texture has been used with GetRTData or GetFrontbufferData before.
       // Those functions create a buffer, so the buffer always exists here.
       const Rc<DxvkBuffer>& buffer = pSrcTexture->GetBuffer();
-      WaitForResource(buffer, pSrcTexture->GetMappingBufferSequenceNumber(SrcSubresource), 0);
+      WaitForResource(*buffer, pSrcTexture->GetMappingBufferSequenceNumber(SrcSubresource), 0);
       pSrcTexture->SetNeedsReadback(SrcSubresource, false);
     }
 
@@ -5248,7 +5180,7 @@ namespace dxvk {
       const bool skipWait = (!needsReadback && (readOnly || !directMapping)) || noOverwrite;
       if (!skipWait) {
         const Rc<DxvkBuffer> mappingBuffer = pResource->GetBuffer<D3D9_COMMON_BUFFER_TYPE_MAPPING>();
-        if (!WaitForResource(mappingBuffer, pResource->GetMappingBufferSequenceNumber(), Flags))
+        if (!WaitForResource(*mappingBuffer, pResource->GetMappingBufferSequenceNumber(), Flags))
           return D3DERR_WASSTILLDRAWING;
 
         pResource->SetNeedsReadback(false);
@@ -5392,7 +5324,7 @@ namespace dxvk {
         // - Write to the primary buffer using ProcessVertices which gets copied over to the staging buffer at the end.
         //   So it could end up writing to the buffer on the GPU while the same buffer gets read here on the CPU.
         //   That is why we need to ensure the staging buffer is idle here.
-        WaitForResource(vbo->GetBuffer<D3D9_COMMON_BUFFER_TYPE_STAGING>(), vbo->GetMappingBufferSequenceNumber(), D3DLOCK_READONLY);
+        WaitForResource(*vbo->GetBuffer<D3D9_COMMON_BUFFER_TYPE_STAGING>(), vbo->GetMappingBufferSequenceNumber(), D3DLOCK_READONLY);
       }
 
       const uint32_t vertexSize = m_state.vertexDecl->GetSize(i);
@@ -5543,6 +5475,10 @@ namespace dxvk {
 
 
   void D3D9DeviceEx::EmitCsChunk(DxvkCsChunkRef&& chunk) {
+    // Flush init commands so that the CS thread
+    // can processe them before the first use.
+    m_initializer->FlushCsChunk();
+
     m_csSeqNum = m_csThread.dispatchChunk(std::move(chunk));
   }
 
@@ -5912,10 +5848,10 @@ namespace dxvk {
     if constexpr (Synchronize9On12)
       m_submitStatus.result = VK_NOT_READY;
 
-    m_initializer->Flush();
     m_converter->Flush();
 
-    EmitStagingBufferMarker();
+    // Update signaled staging buffer counter and signal the fence
+    m_stagingMemorySignaled = m_stagingBuffer.getStatistics().allocatedTotal;
 
     // Add commands to flush the threaded
     // context, then flush the command list
@@ -5924,9 +5860,12 @@ namespace dxvk {
     EmitCs<false>([
       cSubmissionFence  = m_submissionFence,
       cSubmissionId     = submissionId,
-      cSubmissionStatus = Synchronize9On12 ? &m_submitStatus : nullptr
+      cSubmissionStatus = Synchronize9On12 ? &m_submitStatus : nullptr,
+      cStagingBufferFence = m_stagingBufferFence,
+      cStagingBufferAllocated = m_stagingMemorySignaled
     ] (DxvkContext* ctx) {
       ctx->signal(cSubmissionFence, cSubmissionId);
+      ctx->signal(cStagingBufferFence, cStagingBufferAllocated);
       ctx->flushCommandList(cSubmissionStatus);
     });
 
@@ -5939,6 +5878,10 @@ namespace dxvk {
     // Vulkan queue submission is performed.
     if constexpr (Synchronize9On12)
       m_dxvkDevice->waitForSubmission(&m_submitStatus);
+
+    // Notify the device that the context has been flushed,
+    // this resets some resource initialization heuristics.
+    m_initializer->NotifyContextFlush();
   }
 
 
@@ -5961,42 +5904,28 @@ namespace dxvk {
   }
 
 
-  inline void D3D9DeviceEx::UpdateBoundRTs(uint32_t index) {
-    const uint32_t bit = 1 << index;
-    
-    m_boundRTs &= ~bit;
-
-    if (m_state.renderTargets[index] != nullptr &&
-       !m_state.renderTargets[index]->IsNull())
-      m_boundRTs |= bit;
-  }
-
-
   inline void D3D9DeviceEx::UpdateActiveRTs(uint32_t index) {
     const uint32_t bit = 1 << index;
 
     m_activeRTsWhichAreTextures &= ~bit;
 
-    if ((m_boundRTs & bit) != 0 &&
+    if (HasRenderTargetBound(index) &&
         m_state.renderTargets[index]->GetBaseTexture() != nullptr &&
-        m_anyColorWrites & bit)
+        m_state.renderStates[ColorWriteIndex(index)] != 0)
       m_activeRTsWhichAreTextures |= bit;
 
     UpdateActiveHazardsRT(bit);
   }
 
   template <uint32_t Index>
-  inline void D3D9DeviceEx::UpdateAnyColorWrites(bool has) {
-    const uint32_t bit = 1 << Index;
-
-    m_anyColorWrites &= ~bit;
-
-    if (has)
-      m_anyColorWrites |= bit;
-
+  inline void D3D9DeviceEx::UpdateAnyColorWrites() {
     // The 0th RT is always bound.
-    if (Index == 0 || m_boundRTs & bit) {
-      m_flags.set(D3D9DeviceFlag::DirtyFramebuffer);
+    bool bound = HasRenderTargetBound(Index);
+    if (Index == 0 || bound) {
+      if (bound) {
+        m_flags.set(D3D9DeviceFlag::DirtyFramebuffer);
+      }
+
       UpdateActiveRTs(Index);
     }
   }
@@ -6182,9 +6111,11 @@ namespace dxvk {
       // Guaranteed to not be nullptr...
       auto texInfo = GetCommonTexture(m_state.textures[texIdx]);
 
-      if (texInfo->NeedsMipGen()) {
+      if (likely(texInfo->NeedsMipGen())) {
         this->EmitGenerateMips(texInfo);
-        texInfo->SetNeedsMipGen(false);
+        if (likely(!IsTextureBoundAsAttachment(texInfo))) {
+          texInfo->SetNeedsMipGen(false);
+        }
       }
     }
 
@@ -6209,14 +6140,18 @@ namespace dxvk {
 
 
   void D3D9DeviceEx::MarkTextureMipsUnDirty(D3D9CommonTexture* pResource) {
-    pResource->SetNeedsMipGen(false);
+    if (likely(!IsTextureBoundAsAttachment(pResource))) {
+      // We need to keep the texture marked as needing mipmap generation because we don't set that when rendering.
+      pResource->SetNeedsMipGen(false);
 
-    for (uint32_t i : bit::BitMask(m_activeTextures)) {
-      // Guaranteed to not be nullptr...
-      auto texInfo = GetCommonTexture(m_state.textures[i]);
+      for (uint32_t i : bit::BitMask(m_activeTextures)) {
+        // Guaranteed to not be nullptr...
+        auto texInfo = GetCommonTexture(m_state.textures[i]);
 
-      if (texInfo == pResource)
-        m_activeTexturesToGen &= ~(1 << i);
+        if (unlikely(texInfo == pResource)) {
+          m_activeTexturesToGen &= ~(1 << i);
+        }
+      }
     }
   }
 
@@ -6340,38 +6275,93 @@ namespace dxvk {
     // target bindings are updated. Set up the attachments.
     VkSampleCountFlagBits sampleCount = VK_SAMPLE_COUNT_FLAG_BITS_MAX_ENUM;
 
-    for (uint32_t i : bit::BitMask(m_boundRTs)) {
+    // Some games break if render targets that get disabled using the color write mask
+    // end up shrinking the render area. So we don't bind those.
+    // (This impacted Dead Space 1.)
+    // But we want to minimize frame buffer changes because those
+    // break up the current render pass. So we dont unbind for disabled color write masks
+    // if the RT has the same size or is bigger than the smallest active RT.
+
+    uint32_t boundMask = 0u;
+    uint32_t anyColorWriteMask = 0u;
+    uint32_t limitsRenderAreaMask = 0u;
+    VkExtent2D renderArea = { ~0u, ~0u };
+    for (uint32_t i = 0u; i < m_state.renderTargets.size(); i++) {
+      if (!HasRenderTargetBound(i))
+        continue;
+
       const DxvkImageCreateInfo& rtImageInfo = m_state.renderTargets[i]->GetCommonTexture()->GetImage()->info();
 
+      // Dont bind it if the sample count doesnt match
       if (likely(sampleCount == VK_SAMPLE_COUNT_FLAG_BITS_MAX_ENUM))
         sampleCount = rtImageInfo.sampleCount;
       else if (unlikely(sampleCount != rtImageInfo.sampleCount))
         continue;
 
-      if (!(m_anyColorWrites & (1 << i)))
-        continue;
-
+      // Dont bind it if the pixel shader doesnt write to it
       if (!(m_psShaderMasks.rtMask & (1 << i)))
         continue;
 
+      boundMask |= 1 << i;
+
+      VkExtent2D rtExtent = m_state.renderTargets[i]->GetSurfaceExtent();
+      bool rtLimitsRenderArea = rtExtent.width < renderArea.width || rtExtent.height < renderArea.height;
+      limitsRenderAreaMask |= rtLimitsRenderArea << i;
+
+      // It will only get bound if its not smaller than the others.
+      // So RTs with a disabled color write mask will never impact the render area.
+      if (m_state.renderStates[ColorWriteIndex(i)] == 0)
+        continue;
+
+      anyColorWriteMask |= 1 << i;
+
+      if (rtExtent.width < renderArea.width && rtExtent.height < renderArea.height) {
+        // It's smaller on both axis, so the previous RTs no longer limit the size
+        limitsRenderAreaMask = 1 << i;
+      }
+
+      renderArea.width = std::min(renderArea.width, rtExtent.width);
+      renderArea.height = std::min(renderArea.height, rtExtent.height);
+    }
+
+    bool dsvBound = false;
+    if (m_state.depthStencil != nullptr) {
+      // We only need to skip binding the DSV if it would shrink the render area
+      // despite not being used, otherwise we might end up with unnecessary render pass spills
+      bool anyDSStateEnabled = m_state.renderStates[D3DRS_ZENABLE]
+        || m_state.renderStates[D3DRS_ZWRITEENABLE]
+        || m_state.renderStates[D3DRS_STENCILENABLE]
+        || m_state.renderStates[D3DRS_ADAPTIVETESS_X] == uint32_t(D3D9Format::NVDB);
+
+      VkExtent2D dsvExtent = m_state.depthStencil->GetSurfaceExtent();
+      bool dsvLimitsRenderArea = dsvExtent.width < renderArea.width || dsvExtent.height < renderArea.height;
+
+      const DxvkImageCreateInfo& dsImageInfo = m_state.depthStencil->GetCommonTexture()->GetImage()->info();
+      const bool sampleCountMatches = sampleCount == VK_SAMPLE_COUNT_FLAG_BITS_MAX_ENUM || sampleCount == dsImageInfo.sampleCount;
+
+      dsvBound = sampleCountMatches && (anyDSStateEnabled || !dsvLimitsRenderArea);
+      if (sampleCountMatches && anyDSStateEnabled && dsvExtent.width < renderArea.width && dsvExtent.height < renderArea.height) {
+        // It's smaller on both axis, so the previous RTs no longer limit the size
+        limitsRenderAreaMask = 0u;
+      }
+    }
+
+    // We only need to skip binding the RT if it would shrink the render area
+    // despite not having color writes enabled,
+    // otherwise we might end up with unnecessary render pass spills
+    boundMask &= (anyColorWriteMask | ~limitsRenderAreaMask);
+    for (uint32_t i : bit::BitMask(boundMask)) {
       attachments.color[i] = {
         m_state.renderTargets[i]->GetRenderTargetView(srgb),
         m_state.renderTargets[i]->GetRenderTargetLayout(m_hazardLayout) };
     }
 
-    if (m_state.depthStencil != nullptr &&
-      (m_state.renderStates[D3DRS_ZENABLE]
-        || m_state.renderStates[D3DRS_ZWRITEENABLE]
-        || m_state.renderStates[D3DRS_STENCILENABLE]
-        || m_state.renderStates[D3DRS_ADAPTIVETESS_X] == uint32_t(D3D9Format::NVDB))) {
-      const DxvkImageCreateInfo& dsImageInfo = m_state.depthStencil->GetCommonTexture()->GetImage()->info();
+    if (dsvBound) {
       const bool depthWrite = m_state.renderStates[D3DRS_ZWRITEENABLE];
 
-      if (likely(sampleCount == VK_SAMPLE_COUNT_FLAG_BITS_MAX_ENUM || sampleCount == dsImageInfo.sampleCount)) {
-        attachments.depth = {
-          m_state.depthStencil->GetDepthStencilView(),
-          m_state.depthStencil->GetDepthStencilLayout(depthWrite, m_activeHazardsDS != 0, m_hazardLayout) };
-      }
+      attachments.depth = {
+        m_state.depthStencil->GetDepthStencilView(),
+        m_state.depthStencil->GetDepthStencilLayout(depthWrite, m_activeHazardsDS != 0, m_hazardLayout) };
     }
 
     VkImageAspectFlags feedbackLoopAspects = 0u;
@@ -8112,10 +8102,10 @@ namespace dxvk {
     UpdatePixelBoolSpec(0u);
     UpdateCommonSamplerSpec(0u, 0u, 0u);
 
-    UpdateAnyColorWrites<0>(true);
-    UpdateAnyColorWrites<1>(true);
-    UpdateAnyColorWrites<2>(true);
-    UpdateAnyColorWrites<3>(true);
+    UpdateAnyColorWrites<0>();
+    UpdateAnyColorWrites<1>();
+    UpdateAnyColorWrites<2>();
+    UpdateAnyColorWrites<3>();
 
     SetIndices(nullptr);
     for (uint32_t i = 0; i < caps::MaxStreams; i++) {

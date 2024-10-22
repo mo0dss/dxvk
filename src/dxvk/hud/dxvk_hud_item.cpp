@@ -211,25 +211,6 @@ namespace dxvk::hud {
   }
 
 
-  HudFrameTimeQueryPool::HudFrameTimeQueryPool(
-    const Rc<DxvkDevice>&           device)
-  : m_vkd(device->vkd()) {
-    VkQueryPoolCreateInfo info = { VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO };
-    info.queryType = VK_QUERY_TYPE_TIMESTAMP;
-    info.queryCount = 1;
-
-    VkResult vr = m_vkd->vkCreateQueryPool(m_vkd->device(), &info, nullptr, &m_pool);
-
-    if (vr != VK_SUCCESS)
-      throw DxvkError(str::format("Failed to create frame time query pool: ", vr));
-  }
-
-
-  HudFrameTimeQueryPool::~HudFrameTimeQueryPool() {
-    m_vkd->vkDestroyQueryPool(m_vkd->device(), m_pool, nullptr);
-  }
-
-
   HudFrameTimeItem::HudFrameTimeItem(const Rc<DxvkDevice>& device, HudRenderer* renderer)
   : m_device            (device),
     m_gfxSetLayout      (createDescriptorSetLayout()),
@@ -298,16 +279,17 @@ namespace dxvk::hud {
           HudPos              maxPos) {
     // Write current time stamp to the buffer
     DxvkBufferSliceHandle sliceHandle = m_gpuBuffer->getSliceHandle();
+    std::pair<VkQueryPool, uint32_t> query = m_query->getQuery();
 
     ctx.cmd->cmdResetQueryPool(DxvkCmdBuffer::InitBuffer,
-      m_queryPool->handle(), 0, 1);
+      query.first, query.second, 1);
 
     ctx.cmd->cmdWriteTimestamp(DxvkCmdBuffer::InitBuffer,
       VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-      m_queryPool->handle(), 0);
+      query.first, query.second);
 
     ctx.cmd->cmdCopyQueryPoolResults(DxvkCmdBuffer::InitBuffer,
-      m_queryPool->handle(), 0, 1, sliceHandle.handle,
+      query.first, query.second, 1, sliceHandle.handle,
       sliceHandle.offset + (dataPoint & 1u) * sizeof(uint64_t), sizeof(uint64_t),
       VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
 
@@ -391,8 +373,8 @@ namespace dxvk::hud {
       drawInfoBuffer, textBufferView, 2u);
 
     // Make sure GPU resources are being kept alive as necessary
-    ctx.cmd->trackResource<DxvkAccess::Write>(m_gpuBuffer->getAllocation());
-    ctx.cmd->trackResource<DxvkAccess::Write>(m_queryPool);
+    ctx.cmd->track(m_gpuBuffer, DxvkAccess::Write);
+    ctx.cmd->track(m_query);
   }
 
 
@@ -437,7 +419,7 @@ namespace dxvk::hud {
 
     ctx.cmd->cmdDraw(4, 1, 0, 0);
 
-    ctx.cmd->trackResource<DxvkAccess::Read>(m_gpuBuffer->getAllocation());
+    ctx.cmd->track(m_gpuBuffer, DxvkAccess::Read);
   }
 
 
@@ -491,10 +473,9 @@ namespace dxvk::hud {
     depInfo.pMemoryBarriers = &barrier;
 
     ctx.cmd->cmdPipelineBarrier(DxvkCmdBuffer::InitBuffer, &depInfo);
-    ctx.cmd->trackResource<DxvkAccess::Write>(m_gpuBuffer->getAllocation());
+    ctx.cmd->track(m_gpuBuffer, DxvkAccess::Write);
 
-    // We'll use and initialize this later as necessary
-    m_queryPool = new HudFrameTimeQueryPool(m_device);
+    m_query = m_device->createRawQuery(VK_QUERY_TYPE_TIMESTAMP);
   }
 
 
@@ -1165,7 +1146,7 @@ namespace dxvk::hud {
     VkDescriptorBufferInfo drawDescriptor = { };
     VkDescriptorBufferInfo dataDescriptor = { };
 
-    updateDataBuffer(drawDescriptor, dataDescriptor);
+    updateDataBuffer(ctx, drawDescriptor, dataDescriptor);
 
     std::array<VkWriteDescriptorSet, 2> descriptorWrites = {{
       { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr,
@@ -1195,13 +1176,14 @@ namespace dxvk::hud {
     ctx.cmd->cmdDraw(4, m_drawInfos.size(), 0, 0);
 
     // Track data buffer lifetime
-    ctx.cmd->trackResource<DxvkAccess::Read>(m_dataBuffer->getAllocation());
+    ctx.cmd->track(m_dataBuffer, DxvkAccess::Read);
 
     m_drawInfos.clear();
   }
 
 
   void HudMemoryDetailsItem::updateDataBuffer(
+    const DxvkContextObjects& ctx,
           VkDescriptorBufferInfo& drawDescriptor,
           VkDescriptorBufferInfo& dataDescriptor) {
     size_t drawInfoSize = m_drawInfos.size() * sizeof(DrawInfo);
@@ -1225,7 +1207,8 @@ namespace dxvk::hud {
         VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     } else {
       // Ensure we can update the buffer without overriding live data
-      m_dataBuffer->assignSlice(m_dataBuffer->allocateSlice());
+      auto allocation = m_dataBuffer->assignStorage(m_dataBuffer->allocateStorage());
+      ctx.cmd->track(std::move(allocation));
     }
 
     // Update draw infos and pad unused area with zeroes
