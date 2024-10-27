@@ -404,9 +404,12 @@ namespace dxvk {
     { R"(\\GRW\.exe$)", {{
       { "d3d11.dcSingleUseMode",            "False" },
     }} },
-    /* Vindictus d3d11 CPU bound perf             */
+    /* Vindictus d3d11 CPU bound perf, and work   *
+     * around the game not properly initializing  *
+     * some of its constant buffers after discard */
     { R"(\\Vindictus(_x64)?\.exe$)", {{
       { "d3d11.cachedDynamicResources",     "cr"   },
+      { "dxvk.zeroMappedMemory",            "True" },
     }} },
     /* Riders Republic - Statically linked AMDAGS */
     { R"(\\RidersRepublic(_BE)?\.exe$)", {{
@@ -707,10 +710,6 @@ namespace dxvk {
     /* Supreme Commander & Forged Alliance Forever */
     { R"(\\(SupremeCommander|ForgedAlliance)\.exe$)", {{
       { "d3d9.floatEmulation",              "Strict" },
-    }} },
-    /* Star Wars The Old Republic */
-    { R"(\\swtor\.exe$)", {{
-      { "d3d9.forceSamplerTypeSpecConstants", "True" },
     }} },
     /* Bionic Commando
        Physics break at high fps               */

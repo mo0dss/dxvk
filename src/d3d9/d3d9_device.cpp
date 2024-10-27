@@ -54,7 +54,7 @@ namespace dxvk {
     , m_d3d9Options     ( dxvkDevice, pParent->GetInstance()->config() )
     , m_multithread     ( BehaviorFlags & D3DCREATE_MULTITHREADED )
     , m_isSWVP          ( (BehaviorFlags & D3DCREATE_SOFTWARE_VERTEXPROCESSING) ? true : false )
-    , m_csThread        ( dxvkDevice, dxvkDevice->createContext(DxvkContextType::Primary) )
+    , m_csThread        ( dxvkDevice, dxvkDevice->createContext() )
     , m_csChunk         ( AllocCsChunk() )
     , m_submissionFence (new sync::Fence())
     , m_flushTracker    (m_d3d9Options.reproducibleCommandStream)
@@ -687,10 +687,10 @@ namespace dxvk {
     desc.IsAttachmentOnly   = FALSE;
     // Docs:
     // Textures placed in the D3DPOOL_DEFAULT pool cannot be locked
-    // unless they are dynamic textures or they are private, FOURCC, driver formats.
+    // unless they are dynamic textures. Volume textures do not
+    // exempt private, FOURCC, driver formats from these checks.
     desc.IsLockable         = Pool != D3DPOOL_DEFAULT
-                            || (Usage & D3DUSAGE_DYNAMIC)
-                            || IsVendorFormat(EnumerateFormat(Format));
+                            || (Usage & D3DUSAGE_DYNAMIC);
 
     if (FAILED(D3D9CommonTexture::NormalizeTextureProperties(this, D3DRTYPE_VOLUMETEXTURE, &desc)))
       return D3DERR_INVALIDCALL;
@@ -4656,6 +4656,26 @@ namespace dxvk {
     if (unlikely(!desc.IsLockable))
       return D3DERR_INVALIDCALL;
 
+    if (unlikely(pBox != nullptr)) {
+      D3DRESOURCETYPE type = pResource->GetType();
+      D3D9_FORMAT_BLOCK_SIZE blockSize = GetFormatAlignedBlockSize(desc.Format);
+
+      bool isBlockAlignedFormat = blockSize.Width > 0 && blockSize.Height > 0;
+      bool isNotLeftAligned   = pBox->Left   && (pBox->Left   & (blockSize.Width  - 1));
+      bool isNotTopAligned    = pBox->Top    && (pBox->Top    & (blockSize.Height - 1));
+      bool isNotRightAligned  = pBox->Right  && (pBox->Right  & (blockSize.Width  - 1));
+      bool isNotBottomAligned = pBox->Bottom && (pBox->Bottom & (blockSize.Height - 1));
+
+      // LockImage calls on D3DPOOL_DEFAULT surfaces and volume textures with formats
+      // which need to be block aligned, must be validated for mip level 0.
+      if (MipLevel == 0 && isBlockAlignedFormat
+        && (type == D3DRTYPE_VOLUMETEXTURE ||
+           (type != D3DRTYPE_VOLUMETEXTURE && desc.Pool == D3DPOOL_DEFAULT))
+        && (isNotLeftAligned  || isNotTopAligned ||
+            isNotRightAligned || isNotBottomAligned))
+        return D3DERR_INVALIDCALL;
+    }
+
     auto& formatMapping = pResource->GetFormatMapping();
 
     const DxvkFormatInfo* formatInfo = formatMapping.IsValid()
@@ -5055,13 +5075,17 @@ namespace dxvk {
         slice.mapPtr, mapPtr, srcBlockCount, formatElementSize,
         pitch, std::min(pSrcTexture->GetPlaneCount(), 2u) * pitch * srcBlockCount.height);
 
-      Flush();
-      SynchronizeCsThread(DxvkCsThread::SynchronizeAll);
+      EmitCs([this,
+        cConvertFormat    = convertFormat,
+        cDstImage         = std::move(image),
+        cDstLayers        = convertedDstLayers,
+        cSrcSlice         = std::move(slice.slice)
+      ] (DxvkContext* ctx) {
+        auto contextObjects = ctx->beginExternalRendering();
 
-      m_converter->ConvertFormat(
-        convertFormat,
-        image, convertedDstLayers,
-        slice.slice);
+        m_converter->ConvertFormat(contextObjects,
+          cConvertFormat, cDstImage, cDstLayers, cSrcSlice);
+      });
     }
     UnmapTextures();
     ConsiderFlush(GpuFlushType::ImplicitWeakHint);
@@ -5847,8 +5871,6 @@ namespace dxvk {
 
     if constexpr (Synchronize9On12)
       m_submitStatus.result = VK_NOT_READY;
-
-    m_converter->Flush();
 
     // Update signaled staging buffer counter and signal the fence
     m_stagingMemorySignaled = m_stagingBuffer.getStatistics().allocatedTotal;

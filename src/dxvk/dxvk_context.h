@@ -32,7 +32,7 @@ namespace dxvk {
 
   public:
     
-    DxvkContext(const Rc<DxvkDevice>& device, DxvkContextType type);
+    DxvkContext(const Rc<DxvkDevice>& device);
     ~DxvkContext();
 
     /**
@@ -936,9 +936,6 @@ namespace dxvk {
      * backing resource. This allows the host to access
      * the buffer while the GPU is still accessing the
      * original backing resource.
-     * 
-     * \warning If the buffer is used by another context,
-     * invalidating it will result in undefined behaviour.
      * \param [in] buffer The buffer to invalidate
      * \param [in] slice New buffer slice
      */
@@ -962,8 +959,6 @@ namespace dxvk {
      * \brief Invalidates image content
      *
      * Replaces the backing storage of an image.
-     * \warning If the image is used by another context,
-     * invalidating it will result in undefined behaviour.
      * \param [in] buffer The buffer to invalidate
      * \param [in] slice New buffer slice
      */
@@ -975,8 +970,6 @@ namespace dxvk {
      * \brief Invalidates image content and add usage flag
      *
      * Replaces the backing storage of an image.
-     * \warning If the image is used by another context,
-     * invalidating it will result in undefined behaviour.
      * \param [in] buffer The buffer to invalidate
      * \param [in] slice New buffer slice
      * \param [in] usageInfo Added usage info
@@ -1389,7 +1382,6 @@ namespace dxvk {
   private:
     
     Rc<DxvkDevice>          m_device;
-    DxvkContextType         m_type;
     DxvkObjects*            m_common;
     
     Rc<DxvkCommandList>     m_cmd;
@@ -1756,6 +1748,8 @@ namespace dxvk {
       const DxvkRelocateBufferInfo*   bufferInfos,
             size_t                    imageCount,
       const DxvkRelocateImageInfo*    imageInfos);
+
+    void relocateQueuedResources();
 
     Rc<DxvkSampler> createBlitSampler(
             VkFilter                  filter);
