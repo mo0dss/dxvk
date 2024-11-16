@@ -1,4 +1,5 @@
 #include <version.h>
+#include <buildenv.h>
 
 #include "dxvk_instance.h"
 #include "dxvk_openvr.h"
@@ -20,6 +21,7 @@ namespace dxvk {
   DxvkInstance::DxvkInstance(const DxvkInstanceImportInfo& args, DxvkInstanceFlags flags) {
     Logger::info(str::format("Game: ", env::getExeName()));
     Logger::info(str::format("DXVK: ", DXVK_VERSION));
+    Logger::info(str::format("Build: ", DXVK_TARGET, " ", DXVK_COMPILER, " ", DXVK_COMPILER_VERSION));
 
     wsi::init();
 
@@ -182,7 +184,7 @@ namespace dxvk {
       appInfo.pApplicationName      = appName.c_str();
       appInfo.applicationVersion    = flags.raw();
       appInfo.pEngineName           = "DXVK";
-      appInfo.engineVersion         = VK_MAKE_API_VERSION(0, 2, 4, 1);
+      appInfo.engineVersion         = VK_MAKE_API_VERSION(0, 2, 5, 0);
       appInfo.apiVersion            = VK_MAKE_API_VERSION(0, 1, 3, 0);
 
       VkInstanceCreateInfo info = { VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };

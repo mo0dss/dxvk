@@ -22,9 +22,11 @@ namespace dxvk {
     /**********************************************/
 
     /* Diablo 4 - Will complain about missing  *
-     * GPU unless dxgi Id match actual GPU Id  */
+     * GPU unless dxgi Id match actual GPU Id. *
+     * Bugs out on some multi-gpu systems.     */
     { R"(\\Diablo IV\.exe$)", {{
-      { "dxgi.hideNvidiaGpu",               "False"  },
+      { "dxgi.hideNvidiaGpu",               "False" },
+      { "dxvk.hideIntegratedGraphics",      "True"  },
     }} },
     /* Ratchet & Clank: Rift Apart - does not allow
      * enabling ray tracing if it sees an AMD GPU. */
@@ -101,7 +103,6 @@ namespace dxvk {
      * set of resources multiple times per frame. */
     { R"(\\QuantumBreak\.exe$)", {{
       { "d3d11.zeroInitWorkgroupMemory",    "True" },
-      { "d3d11.maxImplicitDiscardSize",     "-1"   },
     }} },
     /* Anno 2205: Random crashes with state cache */
     { R"(\\anno2205\.exe$)", {{
@@ -292,10 +293,6 @@ namespace dxvk {
     { R"(\\AoE2DE_s\.exe$)", {{
       { "d3d11.cachedDynamicResources",     "a"    },
     }} },
-    /* Total War: Warhammer III                   */
-    { R"(\\Warhammer3\.exe$)", {{
-      { "d3d11.maxDynamicImageBufferSize",  "4096" },
-    }} },
     /* Assassin's Creed 3 and 4                   */
     { R"(\\ac(3|4bf)[sm]p\.exe$)", {{
       { "d3d11.cachedDynamicResources",     "a"    },
@@ -439,9 +436,14 @@ namespace dxvk {
       { "d3d11.enableContextLock",          "True" },
     }} },
     /* Kena: Bridge of Spirits: intel water       * 
-      flickering issues                           */
+     * flickering issues                          */
     { R"(\\Kena-Win64-Shipping\.exe$)", {{
       { "dxgi.hideIntelGpu",                 "True" },
+    }} },
+    /* GTA Definitive Edition trilogy             * 
+     * Static ags crash with HDR support          */
+    { R"(\\(LibertyCity|ViceCity|SanAndreas)\.exe$)", {{
+      { "dxgi.hideAmdGpu",                 "True" },
     }} },
 
     /**********************************************/
@@ -965,7 +967,7 @@ namespace dxvk {
     }} },
     /* Prince of Persia (2008) - Can get stuck     *
      * during loading at very high fps             */
-    { R"(\\PrinceOfPersia_Launcher\.exe$)", {{
+    { R"(\\Prince( of Persia|OfPersia_Launcher)\.exe$)", {{
       { "d3d9.maxFrameRate",                 "240" },
     }} },
     /* F.E.A.R 1 & expansions                      *
@@ -1151,7 +1153,7 @@ namespace dxvk {
      * Missing geometry and textures without      *
      * legacy DISCARD behavior                    */
     { R"(\\Rayman3\.exe$)", {{
-      { "d3d9.allowDirectBufferMapping",   "False" },
+      { "d3d9.maxFrameRate",                  "60" },
       { "d3d8.forceLegacyDiscard",          "True" },
     }} },
   }};

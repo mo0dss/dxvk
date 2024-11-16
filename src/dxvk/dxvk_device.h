@@ -36,6 +36,7 @@ namespace dxvk {
   struct DxvkDevicePerfHints {
     VkBool32 preferFbDepthStencilCopy : 1;
     VkBool32 preferFbResolve          : 1;
+    VkBool32 renderPassClearFormatBug : 1;
   };
   
   /**
@@ -206,6 +207,19 @@ namespace dxvk {
     VkResult getDeviceStatus() const {
       return m_submissionQueue.getLastError();
     }
+
+    /**
+     * \brief Queries mapped image subresource layout
+     *
+     * Assumes that the image tiling is linear even
+     * if not explcitly set in the create info.
+     * \param [in] createInfo Image create info
+     * \param [in] subresource Subresource to query
+     * \returns Subresource layout
+     */
+    VkSubresourceLayout queryImageSubresourceLayout(
+      const DxvkImageCreateInfo&        createInfo,
+      const VkImageSubresource&         subresource);
 
     /**
      * \brief Checks whether this is a UMA system
@@ -517,6 +531,17 @@ namespace dxvk {
      * \returns Result of the submission
      */
     VkResult waitForSubmission(DxvkSubmitStatus* status);
+
+    /**
+     * \brief Waits for a fence to become signaled
+     *
+     * Treats the fence wait as a GPU sync point, which can
+     * be useful for device statistics. Should only be used
+     * if rendering is stalled because of this wait.
+     * \param [in] fence Fence to wait on
+     * \param [in] value Fence value
+     */
+    void waitForFence(sync::Fence& fence, uint64_t value);
 
     /**
      * \brief Waits for resource to become idle

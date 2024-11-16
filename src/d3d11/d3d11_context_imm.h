@@ -117,8 +117,6 @@ namespace dxvk {
 
     uint32_t                m_mappedImageCount = 0u;
 
-    VkDeviceSize            m_maxImplicitDiscardSize = 0ull;
-
     Rc<sync::CallbackFence> m_submissionFence;
     uint64_t                m_submissionId = 0ull;
     DxvkSubmitStatus        m_submitStatus;
@@ -127,6 +125,9 @@ namespace dxvk {
     GpuFlushTracker         m_flushTracker;
 
     Rc<sync::Fence>         m_stagingBufferFence;
+
+    VkDeviceSize            m_discardMemoryCounter = 0u;
+    VkDeviceSize            m_discardMemoryOnFlush = 0u;
 
     D3D10Multithread        m_multithread;
     D3D11VideoContext       m_videoContext;
@@ -198,6 +199,11 @@ namespace dxvk {
             BOOL                        Synchronize);
 
     void ThrottleAllocation();
+
+    void ThrottleDiscard(
+            VkDeviceSize                Size);
+
+    DxvkStagingBufferStats GetStagingMemoryStatistics();
 
   };
   

@@ -75,6 +75,8 @@ namespace dxvk {
 
   public:
 
+    static constexpr UINT AllLayers = UINT32_MAX;
+
     D3D9CommonTexture(
             D3D9DeviceEx*             pDevice,
             IUnknown*                 pInterface,
@@ -337,10 +339,6 @@ namespace dxvk {
 
     void MarkAllNeedReadback() { m_needsReadback.setAll(); }
 
-    void SetReadOnlyLocked(UINT Subresource, bool readOnly) { return m_readOnly.set(Subresource, readOnly); }
-
-    bool GetReadOnlyLocked(UINT Subresource) const { return m_readOnly.get(Subresource); }
-
     const Rc<DxvkImageView>& GetSampleView(bool srgb) const {
       return m_sampleView.Pick(srgb && IsSrgbCompatible());
     }
@@ -522,8 +520,6 @@ namespace dxvk {
 
     D3D9SubresourceBitset         m_locked = { };
 
-    D3D9SubresourceBitset         m_readOnly = { };
-
     D3D9SubresourceBitset         m_needsReadback = { };
 
     D3D9SubresourceBitset         m_needsUpload = { };
@@ -560,8 +556,6 @@ namespace dxvk {
     static VkImageViewType GetImageViewTypeFromResourceType(
             D3DRESOURCETYPE  Dimension,
             UINT             Layer);
-
-    static constexpr UINT AllLayers = UINT32_MAX;
 
   };
 

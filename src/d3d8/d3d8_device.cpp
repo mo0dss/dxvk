@@ -52,10 +52,6 @@ namespace dxvk {
     }
 
     m_bridge->SetAPIName("D3D8");
-    m_bridge->SetD3D8CompatibilityMode(true);
-    // The default value of D3DRS_POINTSIZE_MIN in D3D8 is 0.0f,
-    // whereas it's initialized to 1.0f in D3D9 by default
-    GetD3D9()->SetRenderState(d3d9::D3DRS_POINTSIZE_MIN, bit::cast<DWORD>(0.0f));
 
     ResetState();
     RecreateBackBuffersAndAutoDepthStencil();
@@ -101,7 +97,8 @@ namespace dxvk {
         };
 
         if (FAILED(res)) {
-          if (DevInfoStructSize != sizeof(D3DDEVINFO_VCACHE))
+          // The struct size needs to be at least equal or larger
+          if (DevInfoStructSize < sizeof(D3DDEVINFO_VCACHE))
             return D3DERR_INVALIDCALL;
 
           memset(pDevInfoStruct, 0, sizeof(D3DDEVINFO_VCACHE));
@@ -232,6 +229,13 @@ namespace dxvk {
     if (unlikely(pPresentationParameters == nullptr))
       return D3DERR_INVALIDCALL;
 
+    // D3DSWAPEFFECT_COPY can not be used with more than one back buffer.
+    // This is also technically true for D3DSWAPEFFECT_COPY_VSYNC, however
+    // RC Cars depends on it not being rejected.
+    if (unlikely(pPresentationParameters->SwapEffect == D3DSWAPEFFECT_COPY
+              && pPresentationParameters->BackBufferCount > 1))
+      return D3DERR_INVALIDCALL;
+
     m_presentParams = *pPresentationParameters;
     ResetState();
 
@@ -306,6 +310,11 @@ namespace dxvk {
           D3DFORMAT           Format,
           D3DPOOL             Pool,
           IDirect3DTexture8** ppTexture) {
+    // D3D8 returns D3DERR_INVALIDCALL for D3DFMT_UNKNOWN
+    // before clearing the content of ppTexture.
+    if (unlikely(Format == D3DFMT_UNKNOWN))
+      return D3DERR_INVALIDCALL;
+
     InitReturnPtr(ppTexture);
 
     if (unlikely(ppTexture == nullptr))
@@ -341,6 +350,11 @@ namespace dxvk {
           D3DFORMAT                 Format,
           D3DPOOL                   Pool,
           IDirect3DVolumeTexture8** ppVolumeTexture) {
+    // D3D8 returns D3DERR_INVALIDCALL for D3DFMT_UNKNOWN
+    // before clearing the content of ppVolumeTexture.
+    if (unlikely(Format == D3DFMT_UNKNOWN))
+      return D3DERR_INVALIDCALL;
+
     InitReturnPtr(ppVolumeTexture);
 
     if (unlikely(ppVolumeTexture == nullptr))
@@ -368,6 +382,11 @@ namespace dxvk {
           D3DFORMAT               Format,
           D3DPOOL                 Pool,
           IDirect3DCubeTexture8** ppCubeTexture) {
+    // D3D8 returns D3DERR_INVALIDCALL for D3DFMT_UNKNOWN
+    // before clearing the content of ppCubeTexture.
+    if (unlikely(Format == D3DFMT_UNKNOWN))
+      return D3DERR_INVALIDCALL;
+
     InitReturnPtr(ppCubeTexture);
 
     if (unlikely(ppCubeTexture == nullptr))
@@ -441,6 +460,11 @@ namespace dxvk {
           D3DMULTISAMPLE_TYPE MultiSample,
           BOOL                Lockable,
           IDirect3DSurface8** ppSurface) {
+    // D3D8 returns D3DERR_INVALIDCALL for D3DFMT_UNKNOWN
+    // before clearing the content of ppSurface.
+    if (unlikely(Format == D3DFMT_UNKNOWN))
+      return D3DERR_INVALIDCALL;
+
     InitReturnPtr(ppSurface);
 
     if (unlikely(ppSurface == nullptr))
@@ -469,6 +493,11 @@ namespace dxvk {
           D3DFORMAT           Format,
           D3DMULTISAMPLE_TYPE MultiSample,
           IDirect3DSurface8** ppSurface) {
+    // D3D8 returns D3DERR_INVALIDCALL for D3DFMT_UNKNOWN
+    // before clearing the content of ppSurface.
+    if (unlikely(Format == D3DFMT_UNKNOWN))
+      return D3DERR_INVALIDCALL;
+
     InitReturnPtr(ppSurface);
 
     if (unlikely(ppSurface == nullptr))
@@ -496,7 +525,12 @@ namespace dxvk {
           UINT                Height,
           D3DFORMAT           Format,
           IDirect3DSurface8** ppSurface) {
+    // Only D3D8 CreateImageSurface clears the content of ppSurface
+    // before checking if Format is equal to D3DFMT_UNKNOWN.
     InitReturnPtr(ppSurface);
+
+    if (unlikely(Format == D3DFMT_UNKNOWN))
+      return D3DERR_INVALIDCALL;
 
     if (unlikely(ppSurface == nullptr))
       return D3DERR_INVALIDCALL;
@@ -1074,6 +1108,10 @@ namespace dxvk {
     if (unlikely(pToken == nullptr))
       return D3DERR_INVALIDCALL;
 
+    // Applications cannot create a state block while another is being recorded
+    if (unlikely(ShouldRecord()))
+      return D3DERR_INVALIDCALL;
+
     Com<d3d9::IDirect3DStateBlock9> pStateBlock9;
     HRESULT res = GetD3D9()->CreateStateBlock(d3d9::D3DSTATEBLOCKTYPE(Type), &pStateBlock9);
 
@@ -1094,6 +1132,10 @@ namespace dxvk {
   HRESULT STDMETHODCALLTYPE D3D8Device::CaptureStateBlock(DWORD Token) {
     D3D8DeviceLock lock = LockDevice();
 
+    // Applications cannot capture a state block while another is being recorded
+    if (unlikely(ShouldRecord()))
+      return D3DERR_INVALIDCALL;
+
     auto stateBlockIter = m_stateBlocks.find(Token);
 
     if (unlikely(stateBlockIter == m_stateBlocks.end())) {
@@ -1106,6 +1148,10 @@ namespace dxvk {
 
   HRESULT STDMETHODCALLTYPE D3D8Device::ApplyStateBlock(DWORD Token) {
     D3D8DeviceLock lock = LockDevice();
+
+    // Applications cannot apply a state block while another is being recorded
+    if (unlikely(ShouldRecord()))
+      return D3DERR_INVALIDCALL;
 
     StateChange();
 
@@ -1122,7 +1168,7 @@ namespace dxvk {
   HRESULT STDMETHODCALLTYPE D3D8Device::DeleteStateBlock(DWORD Token) {
     D3D8DeviceLock lock = LockDevice();
 
-    // "Applications cannot delete a device-state block while another is being recorded"
+    // Applications cannot delete a state block while another is being recorded
     if (unlikely(ShouldRecord()))
       return D3DERR_INVALIDCALL;
 

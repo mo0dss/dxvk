@@ -114,6 +114,9 @@ namespace dxvk {
           DWORD           Usage,
           D3DRESOURCETYPE RType,
           D3D9Format      CheckFormat) {
+    if(unlikely(AdapterFormat == D3D9Format::Unknown))
+      return D3DERR_INVALIDCALL;
+
     if (!IsSupportedAdapterFormat(AdapterFormat))
       return D3DERR_NOTAVAILABLE;
 
@@ -817,8 +820,9 @@ namespace dxvk {
         m_modes.push_back(mode);
     }
 
-    // Sort display modes by width, height and refresh rate,
-    // in that order. Some games rely on correct ordering.
+    // Sort display modes by width, height and refresh rate (descending), in that order.
+    // Some games rely on correct ordering, e.g. Prince of Persia (2008) expects the highest
+    // refresh rate to be listed first for a particular resolution.
     std::sort(m_modes.begin(), m_modes.end(),
       [](const D3DDISPLAYMODEEX& a, const D3DDISPLAYMODEEX& b) {
         if (a.Width < b.Width)   return true;
@@ -827,7 +831,7 @@ namespace dxvk {
         if (a.Height < b.Height) return true;
         if (a.Height > b.Height) return false;
         
-        return a.RefreshRate < b.RefreshRate;
+        return b.RefreshRate < a.RefreshRate;
     });
   }
 
