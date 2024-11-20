@@ -1,4 +1,4 @@
-project('dxvk', ['c', 'cpp'], version : 'v2.5.0', meson_version : '>= 0.58', default_options : [ 'cpp_std=c++17', 'b_vscrt=static_from_buildtype', 'warning_level=2' ])
+project('dxvk', ['c', 'cpp'], version : 'v2.5.1', meson_version : '>= 0.58', default_options : [ 'cpp_std=c++17', 'b_vscrt=static_from_buildtype', 'warning_level=2' ])
 
 pkg = import('pkgconfig')
 cpu_family = target_machine.cpu_family()
@@ -101,12 +101,6 @@ if platform == 'windows'
   lib_d3d9    = cpp.find_library('d3d9')
   lib_d3d11   = cpp.find_library('d3d11')
   lib_dxgi    = cpp.find_library('dxgi')
-
-  if dxvk_is_msvc
-    lib_d3dcompiler_47 = cpp.find_library('d3dcompiler')
-  else
-    lib_d3dcompiler_47 = cpp.find_library('d3dcompiler_47')
-  endif
 
   if dxvk_is_msvc
     res_ext = '.res'
