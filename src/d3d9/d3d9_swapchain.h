@@ -52,10 +52,11 @@ namespace dxvk {
 
   struct D3D9WindowContext {
     Rc<Presenter>                  presenter;
-    std::vector<Rc<DxvkImageView>> imageViews;
 
     uint64_t                       frameId = D3D9DeviceEx::MaxFrameLatency;
     Rc<sync::Fence>                frameLatencySignal;
+
+    uint32_t                       deviceResetCounter = 0u;
   };
 
   using D3D9SwapChainExBase = D3D9DeviceChild<IDirect3DSwapChain9Ex>;
@@ -136,7 +137,7 @@ namespace dxvk {
 
     void SetApiName(const char* name);
 
-    void UpdateWindowCtx();
+    bool UpdateWindowCtx();
 
   private:
 
@@ -157,8 +158,6 @@ namespace dxvk {
 
     D3D9WindowContext*        m_wctx = nullptr;
 
-    Rc<hud::Hud>              m_hud;
-
     std::vector<Com<D3D9Surface, false>> m_backBuffers;
     
     RECT                      m_srcRect;
@@ -166,11 +165,7 @@ namespace dxvk {
     VkExtent2D                m_swapchainExtent = { 0u, 0u };
     bool                      m_partialCopy = false;
 
-    DxvkSubmitStatus          m_presentStatus;
-
     uint32_t                  m_frameLatencyCap = 0;
-
-    bool                      m_dirty    = true;
 
     HWND                      m_window   = nullptr;
     HMONITOR                  m_monitor  = nullptr;
@@ -179,29 +174,22 @@ namespace dxvk {
 
     double                    m_displayRefreshRate = 0.0;
 
-    const char*               m_apiName  = nullptr;
-
     bool                      m_warnedAboutGDIFallback = false;
 
     VkColorSpaceKHR           m_colorspace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
 
+    Rc<hud::HudClientApiItem> m_apiHud;
+
     std::optional<VkHdrMetadataEXT> m_hdrMetadata;
-    bool m_dirtyHdrMetadata = true;
     bool m_unlockAdditionalFormats = false;
 
     D3D9VkExtSwapchain m_swapchainExt;
 
     void PresentImage(UINT PresentInterval);
 
-    void SynchronizePresent();
-
-    void RecreateSwapChain();
-
-    void CreatePresenter();
-
-    VkResult CreateSurface(VkSurfaceKHR* pSurface);
-
-    void CreateRenderTargetViews();
+    Rc<Presenter> CreatePresenter(
+            HWND                Window,
+            Rc<sync::Signal>    Signal);
 
     HRESULT CreateBackBuffers(
             uint32_t            NumBackBuffers,
@@ -209,21 +197,14 @@ namespace dxvk {
 
     void CreateBlitter();
 
-    void CreateHud();
-
     void InitRamp();
 
     void UpdateTargetFrameRate(uint32_t SyncInterval);
 
     uint32_t GetActualFrameLatency();
 
-    uint32_t PickFormats(
-            D3D9Format                Format,
-            VkSurfaceFormatKHR*       pDstFormats);
+    VkSurfaceFormatKHR GetSurfaceFormat();
     
-    uint32_t PickImageCount(
-            UINT                      Preferred);
-
     void NormalizePresentParameters(D3DPRESENT_PARAMETERS* pPresentParams);
 
     void NotifyDisplayRefreshRate(
@@ -241,11 +222,15 @@ namespace dxvk {
     
     HRESULT RestoreDisplayMode(HMONITOR hMonitor);
 
-    bool    UpdatePresentRegion(const RECT* pSourceRect, const RECT* pDestRect);
+    void UpdatePresentRegion(const RECT* pSourceRect, const RECT* pDestRect);
+
+    void UpdatePresentParameters();
 
     VkExtent2D GetPresentExtent();
 
     std::string GetApiName();
+
+    bool IsDeviceReset(D3D9WindowContext* wctx);
 
     const Com<D3D9Surface, false>& GetFrontBuffer() const {
       return m_backBuffers.back();

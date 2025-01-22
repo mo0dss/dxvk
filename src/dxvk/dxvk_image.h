@@ -55,6 +55,10 @@ namespace dxvk {
     // Initial image layout
     VkImageLayout initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
+    // Color space to interpret image data with. This
+    // is only meaningful for swap chain back buffers.
+    VkColorSpaceKHR colorSpace = VK_COLOR_SPACE_MAX_ENUM_KHR;
+
     // Image is used by multiple contexts so it needs
     // to be in its default layout after each submission
     VkBool32 shared = VK_FALSE;
@@ -66,6 +70,9 @@ namespace dxvk {
 
     // Shared handle info
     DxvkSharedHandleInfo sharing = { };
+
+    // Debug name
+    const char* debugName = nullptr;
   };
   
   
@@ -86,6 +93,8 @@ namespace dxvk {
     // New image layout. If undefined, the
     // default layout will not be changed.
     VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
+    // Color space to interpret the image in
+    VkColorSpaceKHR colorSpace = VK_COLOR_SPACE_MAX_ENUM_KHR;
     // Number of new view formats to add
     uint32_t viewFormatCount = 0u;
     // View formats to add to the compatibility list
@@ -601,6 +610,12 @@ namespace dxvk {
     bool isInitialized(
       const VkImageSubresourceRange& subresources) const;
 
+    /**
+     * \brief Sets debug name for the backing resource
+     * \param [in] name New debug name
+     */
+    void setDebugName(const char* name);
+
   private:
 
     Rc<vk::DeviceFn>            m_vkd;
@@ -625,6 +640,12 @@ namespace dxvk {
     dxvk::mutex                 m_viewMutex;
     std::unordered_map<DxvkImageViewKey,
       DxvkImageView, DxvkHash, DxvkEq> m_views;
+
+    std::string                 m_debugName;
+
+    void updateDebugName();
+
+    std::string createDebugName(const char* name) const;
 
     VkImageCreateInfo getImageCreateInfo(
       const DxvkImageUsageInfo&         usageInfo) const;

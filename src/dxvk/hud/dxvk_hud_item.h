@@ -83,6 +83,14 @@ namespace dxvk::hud {
             HudRenderer&        renderer);
 
     /**
+     * \brief Checks whether the item set is empty
+     * \returns \c true if there are no items
+     */
+    bool empty() const {
+      return m_items.empty();
+    }
+
+    /**
      * \brief Creates a HUD item if enabled
      *
      * \tparam T The HUD item type
@@ -91,7 +99,7 @@ namespace dxvk::hud {
      * \param [in] args Constructor arguments
      */
     template<typename T, typename... Args>
-    void add(const char* name, int32_t at, Args... args) {
+    Rc<T> add(const char* name, int32_t at, Args... args) {
       bool enable = m_enableFull;
 
       if (!enable) {
@@ -102,10 +110,14 @@ namespace dxvk::hud {
       if (at < 0 || at > int32_t(m_items.size()))
         at = m_items.size();
 
+      Rc<T> item;
+
       if (enable) {
-        m_items.insert(m_items.begin() + at,
-          new T(std::forward<Args>(args)...));
+        item = new T(std::forward<Args>(args)...);
+        m_items.insert(m_items.begin() + at, item);
       }
+
+      return item;
     }
 
     template<typename T>
@@ -159,6 +171,8 @@ namespace dxvk::hud {
 
     ~HudClientApiItem();
 
+    void setApiName(std::string api);
+
     HudPos render(
       const DxvkContextObjects& ctx,
       const HudPipelineKey&     key,
@@ -168,7 +182,8 @@ namespace dxvk::hud {
 
   private:
 
-    std::string m_api;
+    sync::Spinlock  m_mutex;
+    std::string     m_api;
 
   };
 

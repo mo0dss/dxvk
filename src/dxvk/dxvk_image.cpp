@@ -18,6 +18,14 @@ namespace dxvk {
 
     copyFormatList(createInfo.viewFormatCount, createInfo.viewFormats);
 
+    // Assign debug name to image
+    if (device->isDebugEnabled()) {
+      m_debugName = createDebugName(createInfo.debugName);
+      m_info.debugName = m_debugName.c_str();
+    } else {
+      m_info.debugName = nullptr;
+    }
+
     // Always enable depth-stencil attachment usage for depth-stencil
     // formats since some internal operations rely on it. Read-only
     // versions of these make little sense to begin with.
@@ -208,6 +216,9 @@ namespace dxvk {
     if (m_storage != old) {
       m_imageInfo = m_storage->getImageInfo();
       m_version += 1u;
+
+      if (unlikely(m_info.debugName))
+        updateDebugName();
     }
 
     m_info.flags |= usageInfo.flags;
@@ -217,6 +228,9 @@ namespace dxvk {
 
     if (usageInfo.layout != VK_IMAGE_LAYOUT_UNDEFINED)
       m_info.layout = usageInfo.layout;
+
+    if (usageInfo.colorSpace != VK_COLOR_SPACE_MAX_ENUM_KHR)
+      m_info.colorSpace = usageInfo.colorSpace;
 
     for (uint32_t i = 0; i < usageInfo.viewFormatCount; i++) {
       if (!isViewCompatible(usageInfo.viewFormats[i]))
@@ -280,6 +294,34 @@ namespace dxvk {
     }
 
     return true;
+  }
+
+
+  void DxvkImage::setDebugName(const char* name) {
+    if (likely(!m_info.debugName))
+      return;
+
+    m_debugName = createDebugName(name);
+    m_info.debugName = m_debugName.c_str();
+
+    updateDebugName();
+  }
+
+
+  void DxvkImage::updateDebugName() {
+    if (m_storage->flags().test(DxvkAllocationFlag::OwnsImage)) {
+      VkDebugUtilsObjectNameInfoEXT nameInfo = { VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT };
+      nameInfo.objectType = VK_OBJECT_TYPE_IMAGE;
+      nameInfo.objectHandle = vk::getObjectHandle(m_imageInfo.image);
+      nameInfo.pObjectName = m_info.debugName;
+
+      m_vkd->vkSetDebugUtilsObjectNameEXT(m_vkd->device(), &nameInfo);
+    }
+  }
+
+
+  std::string DxvkImage::createDebugName(const char* name) const {
+    return str::format(vk::isValidDebugName(name) ? name : "Image", " (", cookie(), ")");
   }
 
 
