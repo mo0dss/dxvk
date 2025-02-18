@@ -4,6 +4,7 @@
 #include "dxvk_bind_mask.h"
 #include "dxvk_cmdlist.h"
 #include "dxvk_context_state.h"
+#include "dxvk_latency.h"
 #include "dxvk_objects.h"
 #include "dxvk_queue.h"
 #include "dxvk_util.h"
@@ -67,6 +68,30 @@ namespace dxvk {
      * final call to \ref endRecording.
      */
     void endFrame();
+
+    /**
+     * \brief Begins latency tracking
+     *
+     * Notifies the beginning of a frame on the CS timeline
+     * an ensures that subsequent submissions are associated
+     * with the correct frame ID. Only one tracker can be
+     * active at any given time.
+     * \param [in] tracker Latency tracker object
+     * \param [in] frameId Current frame ID
+     */
+    void beginLatencyTracking(
+      const Rc<DxvkLatencyTracker>&     tracker,
+            uint64_t                    frameId);
+
+    /**
+     * \brief Ends latency tracking
+     *
+     * Notifies the end of the frame. Ignored if the
+     * tracker is not currently active.
+     * \param [in] tracker Latency tracker object
+     */
+    void endLatencyTracking(
+      const Rc<DxvkLatencyTracker>&     tracker);
 
     /**
      * \brief Flushes command buffer
@@ -675,7 +700,7 @@ namespace dxvk {
     
     /**
      * \brief Discards contents of an image view
-     * 
+     *
      * Discards the current contents of the image
      * and performs a fast layout transition. This
      * may improve performance in some cases.
@@ -685,6 +710,14 @@ namespace dxvk {
     void discardImageView(
       const Rc<DxvkImageView>&      imageView,
             VkImageAspectFlags      discardAspects);
+
+    /**
+     * \brief Discards contents of an image
+     *
+     * \param [in] image Image to discard
+     */
+    void discardImage(
+      const Rc<DxvkImage>&          image);
 
     /**
      * \brief Starts compute jobs
@@ -1408,6 +1441,7 @@ namespace dxvk {
     DxvkRenderTargetLayouts m_rtLayouts = { };
 
     std::vector<DxvkDeferredClear> m_deferredClears;
+    std::array<DxvkDeferredResolve, MaxNumRenderTargets + 1u> m_deferredResolves = { };
 
     std::vector<VkWriteDescriptorSet> m_descriptorWrites;
     std::vector<DxvkDescriptorInfo>   m_descriptors;
@@ -1420,6 +1454,10 @@ namespace dxvk {
 
     std::vector<util::DxvkDebugLabel> m_debugLabelStack;
     bool                              m_debugLabelInternalActive = false;
+
+    Rc<DxvkLatencyTracker>  m_latencyTracker;
+    uint64_t                m_latencyFrameId = 0u;
+    bool                    m_endLatencyTracking = false;
 
     void blitImageFb(
             Rc<DxvkImageView>     dstView,
@@ -1572,6 +1610,20 @@ namespace dxvk {
             VkResolveModeFlagBits     depthMode,
             VkResolveModeFlagBits     stencilMode);
 
+    bool resolveImageClear(
+      const Rc<DxvkImage>&            dstImage,
+      const Rc<DxvkImage>&            srcImage,
+      const VkImageResolve&           region,
+            VkFormat                  format);
+
+    bool resolveImageInline(
+      const Rc<DxvkImage>&            dstImage,
+      const Rc<DxvkImage>&            srcImage,
+      const VkImageResolve&           region,
+            VkFormat                  format,
+            VkResolveModeFlagBits     depthMode,
+            VkResolveModeFlagBits     stencilMode);
+
     void uploadImageFb(
       const Rc<DxvkImage>&            image,
       const Rc<DxvkBuffer>&           source,
@@ -1605,6 +1657,10 @@ namespace dxvk {
             bool                      useRenderPass);
 
     void flushSharedImages();
+
+    void flushRenderPassResolves();
+
+    void flushResolves();
 
     void startRenderPass();
     void spillRenderPass(bool suspend);
@@ -1680,6 +1736,10 @@ namespace dxvk {
       const Rc<DxvkImage>&          image,
       const VkImageSubresourceRange& subresources,
             bool                    flushClears = true);
+
+    DxvkDeferredClear* findDeferredClear(
+      const Rc<DxvkImage>&          image,
+      const VkImageSubresourceRange& subresources);
 
     bool updateIndexBufferBinding();
     void updateVertexBufferBindings();
@@ -1770,6 +1830,10 @@ namespace dxvk {
     void endCurrentCommands();
 
     void splitCommands();
+
+    void discardRenderTarget(
+      const DxvkImage&                image,
+      const VkImageSubresourceRange&  subresources);
 
     void flushImageLayoutTransitions(
             DxvkCmdBuffer             cmdBuffer);
@@ -1952,6 +2016,10 @@ namespace dxvk {
     static bool formatsAreCopyCompatible(
             VkFormat                  imageFormat,
             VkFormat                  bufferFormat);
+
+    static bool formatsAreResolveCompatible(
+            VkFormat                  resolveFormat,
+            VkFormat                  viewFormat);
 
     static VkFormat sanitizeTexelBufferFormat(
             VkFormat                  srcFormat);

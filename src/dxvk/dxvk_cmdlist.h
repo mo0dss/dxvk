@@ -103,11 +103,13 @@ namespace dxvk {
      *
      * \param [in] device DXVK device
      * \param [in] queue Queue to submit to
+     * \param [in] frameId Latency frame ID
      * \returns Submission return value
      */
     VkResult submit(
             DxvkDevice*           device,
-            VkQueue               queue);
+            VkQueue               queue,
+            uint64_t              frameId);
 
     /**
      * \brief Resets object
@@ -179,6 +181,15 @@ namespace dxvk {
     VkCommandBuffer getCommandBuffer(DxvkCmdBuffer type);
 
     /**
+     * \brief Retrieves or allocates secondary command buffer
+     *
+     * \param [in] inheritanceInfo Inheritance info
+     * \returns New command buffer in begun state
+     */
+    VkCommandBuffer getSecondaryCommandBuffer(
+      const VkCommandBufferInheritanceInfo& inheritanceInfo);
+
+    /**
      * \brief Resets command pool and all command buffers
      */
     void reset();
@@ -188,8 +199,12 @@ namespace dxvk {
     DxvkDevice*                   m_device;
 
     VkCommandPool                 m_commandPool = VK_NULL_HANDLE;
-    std::vector<VkCommandBuffer>  m_commandBuffers;
-    size_t                        m_next        = 0;
+
+    std::vector<VkCommandBuffer>  m_primaryBuffers;
+    std::vector<VkCommandBuffer>  m_secondaryBuffers;
+
+    size_t                        m_nextPrimary   = 0u;
+    size_t                        m_nextSecondary = 0u;
 
   };
 
@@ -215,11 +230,13 @@ namespace dxvk {
      *
      * \param [in] semaphores Timeline semaphore pair
      * \param [in] timelines Timeline semaphore values
+     * \param [in] frameId Latency frame ID
      * \returns Submission status
      */
     VkResult submit(
       const DxvkTimelineSemaphores&       semaphores,
-            DxvkTimelineSemaphoreValues&  timelines);
+            DxvkTimelineSemaphoreValues&  timelines,
+            uint64_t                      frameId);
     
     /**
      * \brief Stat counters
@@ -424,6 +441,25 @@ namespace dxvk {
     }
 
 
+    void beginSecondaryCommandBuffer(
+      const VkCommandBufferInheritanceInfo& inheritanceInfo) {
+      m_execBuffer = std::exchange(m_cmd.cmdBuffers[uint32_t(DxvkCmdBuffer::ExecBuffer)],
+        m_graphicsPool->getSecondaryCommandBuffer(inheritanceInfo));
+    }
+
+
+    VkCommandBuffer endSecondaryCommandBuffer() {
+      VkCommandBuffer cmd = getCmdBuffer();
+
+      if (m_vkd->vkEndCommandBuffer(cmd))
+        throw DxvkError("DxvkCommandList: Failed to end secondary command buffer");
+
+      m_cmd.cmdBuffers[uint32_t(DxvkCmdBuffer::ExecBuffer)] = m_execBuffer;
+      m_execBuffer = VK_NULL_HANDLE;
+      return cmd;
+    }
+
+
     void cmdBeginQuery(
             VkQueryPool             queryPool,
             uint32_t                query,
@@ -454,7 +490,7 @@ namespace dxvk {
       m_vkd->vkCmdBeginRendering(getCmdBuffer(), pRenderingInfo);
     }
 
-    
+
     void cmdBeginTransformFeedback(
             uint32_t                  firstBuffer,
             uint32_t                  bufferCount,
@@ -801,6 +837,15 @@ namespace dxvk {
     }
 
 
+    void cmdExecuteCommands(
+            uint32_t                count,
+            VkCommandBuffer*        commandBuffers) {
+      m_cmd.execCommands = true;
+
+      m_vkd->vkCmdExecuteCommands(getCmdBuffer(), count, commandBuffers);
+    }
+
+
     void cmdFillBuffer(
             DxvkCmdBuffer           cmdBuffer,
             VkBuffer                dstBuffer,
@@ -1126,6 +1171,7 @@ namespace dxvk {
     Rc<DxvkCommandPool>       m_transferPool;
 
     DxvkCommandSubmissionInfo m_cmd;
+    VkCommandBuffer           m_execBuffer = VK_NULL_HANDLE;
 
     PresenterSync             m_wsiSemaphores = { };
     uint64_t                  m_trackingId = 0u;

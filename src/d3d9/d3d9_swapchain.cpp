@@ -23,10 +23,12 @@ namespace dxvk {
   D3D9SwapChainEx::D3D9SwapChainEx(
           D3D9DeviceEx*          pDevice,
           D3DPRESENT_PARAMETERS* pPresentParams,
-    const D3DDISPLAYMODEEX*      pFullscreenDisplayMode)
+    const D3DDISPLAYMODEEX*      pFullscreenDisplayMode,
+          bool                   EnableLatencyTracking)
     : D3D9SwapChainExBase(pDevice)
     , m_device           (pDevice->GetDXVKDevice())
     , m_frameLatencyCap  (pDevice->GetOptions()->maxFrameLatency)
+    , m_latencyTracking  (EnableLatencyTracking)
     , m_swapchainExt     (this) {
     this->NormalizePresentParameters(pPresentParams);
     m_presentParams = *pPresentParams;
@@ -144,9 +146,15 @@ namespace dxvk {
     if (options->presentInterval >= 0)
       presentInterval = options->presentInterval;
 
-    m_window = m_presentParams.hDeviceWindow;
+    HWND window = m_presentParams.hDeviceWindow;
+
     if (hDestWindowOverride != nullptr)
-      m_window = hDestWindowOverride;
+      window = hDestWindowOverride;
+
+    if (m_window != window) {
+      m_window = window;
+      m_displayRefreshRateDirty = true;
+    }
 
     if (!UpdateWindowCtx())
       return D3D_OK;
@@ -169,6 +177,7 @@ namespace dxvk {
       // We aren't going to device loss simply because
       // 99% of D3D9 games don't handle this properly and
       // just end up crashing (like with alt-tab loss)
+      UpdateWindowedRefreshRate();
       UpdateTargetFrameRate(presentInterval);
       PresentImage(presentInterval);
       return D3D_OK;
@@ -186,7 +195,7 @@ namespace dxvk {
   #define DCX_USESTYLE 0x00010000
 
   HRESULT D3D9SwapChainEx::PresentImageGDI(HWND Window) {
-    m_parent->EndFrame();
+    m_parent->EndFrame(nullptr);
     m_parent->Flush();
 
     if (!std::exchange(m_warnedAboutGDIFallback, true))
@@ -717,6 +726,9 @@ namespace dxvk {
       if (entry->second.presenter) {
         entry->second.presenter->destroyResources();
         entry->second.presenter = nullptr;
+
+        if (m_presentParams.hDeviceWindow == hWindow)
+          DestroyLatencyTracker();
       }
 
       if (m_wctx == &entry->second)
@@ -802,10 +814,15 @@ namespace dxvk {
 
 
   void D3D9SwapChainEx::PresentImage(UINT SyncInterval) {
-    m_parent->EndFrame();
+    m_parent->EndFrame(m_latencyTracker);
     m_parent->Flush();
 
+    if (m_latencyTracker)
+      m_latencyTracker->notifyCpuPresentBegin(m_wctx->frameId + 1u);
+
     // Retrieve the image and image view to present
+    VkResult status = VK_SUCCESS;
+
     Rc<DxvkImage> swapImage = m_backBuffers[0]->GetCommonTexture()->GetImage();
     Rc<DxvkImageView> swapImageView = m_backBuffers[0]->GetImageView(false);
 
@@ -814,10 +831,12 @@ namespace dxvk {
       PresenterSync sync = { };
       Rc<DxvkImage> backBuffer;
 
-      VkResult status = m_wctx->presenter->acquireNextImage(sync, backBuffer);
+      status = m_wctx->presenter->acquireNextImage(sync, backBuffer);
 
-      if (status < 0 || status == VK_NOT_READY)
+      if (status < 0 || status == VK_NOT_READY) {
+        status = i ? VK_SUCCESS : status;
         break;
+      }
 
       VkRect2D srcRect = {
         {  int32_t(m_srcRect.left),                    int32_t(m_srcRect.top)                    },
@@ -854,7 +873,8 @@ namespace dxvk {
         cDstRect        = dstRect,
         cRepeat         = i,
         cSync           = sync,
-        cFrameId        = m_wctx->frameId
+        cFrameId        = m_wctx->frameId,
+        cLatency        = m_latencyTracker
       ] (DxvkContext* ctx) {
         // Update back buffer color space as necessary
         if (cSrcView->image()->info().colorSpace != cColorSpace) {
@@ -876,13 +896,32 @@ namespace dxvk {
 
         uint64_t frameId = cRepeat ? 0 : cFrameId;
 
-        cDevice->presentImage(cPresenter, frameId, nullptr);
+        cDevice->presentImage(cPresenter, cLatency, frameId, nullptr);
       });
 
       m_parent->FlushCsChunk();
     }
 
+    if (m_latencyTracker) {
+      if (status == VK_SUCCESS)
+        m_latencyTracker->notifyCpuPresentEnd(m_wctx->frameId);
+      else
+        m_latencyTracker->discardTimings();
+    }
+
     SyncFrameLatency();
+
+    DxvkLatencyStats latencyStats = { };
+
+    if (m_latencyTracker && status == VK_SUCCESS) {
+      latencyStats = m_latencyTracker->getStatistics(m_wctx->frameId);
+      m_latencyTracker->sleepAndBeginFrame(m_wctx->frameId + 1, std::abs(m_targetFrameRate));
+
+      m_parent->BeginFrame(m_latencyTracker, m_wctx->frameId + 1u);
+    }
+
+    if (m_latencyHud)
+      m_latencyHud->accumulateStats(latencyStats);
 
     // Rotate swap chain buffers so that the back
     // buffer at index 0 becomes the front buffer.
@@ -941,6 +980,9 @@ namespace dxvk {
 
       entry->second.frameLatencySignal = new sync::Fence(entry->second.frameId);
       entry->second.presenter = CreatePresenter(m_window, entry->second.frameLatencySignal);
+
+      if (m_presentParams.hDeviceWindow == m_window && m_latencyTracking)
+        m_latencyTracker = m_device->createLatencyTracker(entry->second.presenter);
     }
 
     m_wctx = &entry->second;
@@ -980,7 +1022,7 @@ namespace dxvk {
     for (uint32_t i = 0; i < NumBuffers; i++) {
       D3D9Surface* surface;
       try {
-        surface = new D3D9Surface(m_parent, &desc, this, nullptr);
+        surface = new D3D9Surface(m_parent, &desc, m_parent->IsExtended(), this, nullptr);
         m_parent->IncrementLosableCounter();
       } catch (const DxvkError& e) {
         DestroyBackBuffers();
@@ -1017,6 +1059,10 @@ namespace dxvk {
 
     if (hud) {
       m_apiHud = hud->addItem<hud::HudClientApiItem>("api", 1, GetApiName());
+
+      if (m_latencyTracking)
+        m_latencyHud = hud->addItem<hud::HudLatencyItem>("latency", 4);
+
       hud->addItem<hud::HudSamplerCount>("samplers", -1, m_parent);
       hud->addItem<hud::HudFixedFunctionShaders>("ffshaders", -1, m_parent);
       hud->addItem<hud::HudSWVPState>("swvp", -1, m_parent);
@@ -1041,25 +1087,38 @@ namespace dxvk {
   }
 
 
+  void D3D9SwapChainEx::DestroyLatencyTracker() {
+    if (!m_latencyTracker)
+      return;
+
+    m_parent->InjectCs([
+      cTracker = std::move(m_latencyTracker)
+    ] (DxvkContext* ctx) {
+      ctx->endLatencyTracking(cTracker);
+    });
+  }
+
+
   void D3D9SwapChainEx::UpdateTargetFrameRate(uint32_t SyncInterval) {
     double frameRateOption = double(m_parent->GetOptions()->maxFrameRate);
     double frameRate = std::max(frameRateOption, 0.0);
 
-    if (SyncInterval && frameRateOption == 0.0)
-      frameRate = -m_displayRefreshRate / double(SyncInterval);
+    if (frameRateOption == 0.0 && SyncInterval) {
+      bool engageLimiter = SyncInterval > 1u || m_monitor ||
+        m_device->config().latencySleep == Tristate::True;
+
+      if (engageLimiter)
+        frameRate = -m_displayRefreshRate / double(SyncInterval);
+    }
 
     m_wctx->presenter->setFrameRateLimit(frameRate, GetActualFrameLatency());
+    m_targetFrameRate = frameRate;
   }
 
 
   void D3D9SwapChainEx::SyncFrameLatency() {
     // Wait for the sync event so that we respect the maximum frame latency
     m_wctx->frameLatencySignal->wait(m_wctx->frameId - GetActualFrameLatency());
-  }
-
-  void D3D9SwapChainEx::SetApiName(const char* name) {
-    if (m_apiHud && name)
-      m_apiHud->setApiName(name);
   }
 
   uint32_t D3D9SwapChainEx::GetActualFrameLatency() {
@@ -1114,9 +1173,29 @@ namespace dxvk {
   }
 
 
-  void D3D9SwapChainEx::NotifyDisplayRefreshRate(
-          double                  RefreshRate) {
-    m_displayRefreshRate = RefreshRate;
+  void D3D9SwapChainEx::UpdateWindowedRefreshRate() {
+    // Ignore call if we are in fullscreen mode and
+    // know the active display mode already anyway
+    if (!m_displayRefreshRateDirty || m_monitor)
+      return;
+
+    m_displayRefreshRate = 0.0;
+    m_displayRefreshRateDirty = false;
+
+    HMONITOR monitor = wsi::getWindowMonitor(m_window);
+
+    if (!monitor)
+      return;
+
+    wsi::WsiMode mode = { };
+
+    if (!wsi::getCurrentDisplayMode(monitor, &mode))
+      return;
+
+    if (mode.refreshRate.denominator) {
+      m_displayRefreshRate = double(mode.refreshRate.numerator)
+                           / double(mode.refreshRate.denominator);
+    }
   }
 
 
@@ -1195,12 +1274,15 @@ namespace dxvk {
 
     if (!wsi::setWindowMode(monitor, m_window, &m_windowState, wsiMode))
       return D3DERR_NOTAVAILABLE;
-    
-    if (wsi::getCurrentDisplayMode(monitor, &wsiMode))
-      NotifyDisplayRefreshRate(double(wsiMode.refreshRate.numerator) / double(wsiMode.refreshRate.denominator));
-    else
-      NotifyDisplayRefreshRate(0.0);
 
+    m_displayRefreshRate = 0.0;
+
+    if (wsi::getCurrentDisplayMode(monitor, &wsiMode)) {
+      m_displayRefreshRate = double(wsiMode.refreshRate.numerator)
+                           / double(wsiMode.refreshRate.denominator);
+    }
+
+    m_displayRefreshRateDirty = false;
     return D3D_OK;
   }
   
@@ -1212,7 +1294,7 @@ namespace dxvk {
     if (!wsi::restoreDisplayMode())
       return D3DERR_NOTAVAILABLE;
 
-    NotifyDisplayRefreshRate(0.0);
+    m_displayRefreshRateDirty = true;
     return D3D_OK;
   }
 
@@ -1269,7 +1351,8 @@ namespace dxvk {
 
 
   std::string D3D9SwapChainEx::GetApiName() {
-    return this->GetParent()->IsExtended() ? "D3D9Ex" : "D3D9";
+    return this->GetParent()->IsD3D8Compatible() ? "D3D8" :
+           this->GetParent()->IsExtended() ? "D3D9Ex" : "D3D9";
   }
 
 

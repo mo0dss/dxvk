@@ -171,8 +171,6 @@ namespace dxvk::hud {
 
     ~HudClientApiItem();
 
-    void setApiName(std::string api);
-
     HudPos render(
       const DxvkContextObjects& ctx,
       const HudPipelineKey&     key,
@@ -731,6 +729,48 @@ namespace dxvk::hud {
     dxvk::high_resolution_clock::time_point m_timeDone = dxvk::high_resolution_clock::now();
 
     uint32_t computePercentage() const;
+
+  };
+
+
+  /**
+   * \brief Frame latency item
+   */
+  class HudLatencyItem : public HudItem {
+    constexpr static int64_t UpdateInterval = 500'000;
+
+    constexpr static uint32_t MaxInvalidUpdates = 20u;
+  public:
+
+    HudLatencyItem();
+
+    ~HudLatencyItem();
+
+    void accumulateStats(const DxvkLatencyStats& stats);
+
+    void update(dxvk::high_resolution_clock::time_point time);
+
+    HudPos render(
+      const DxvkContextObjects& ctx,
+      const HudPipelineKey&     key,
+      const HudOptions&         options,
+            HudRenderer&        renderer,
+            HudPos              position);
+
+  private:
+
+    sync::Spinlock      m_mutex;
+
+    DxvkLatencyStats    m_accumStats = { };
+    uint32_t            m_accumFrames = 0u;
+
+    uint32_t            m_invalidUpdates = MaxInvalidUpdates;
+
+    std::string         m_latencyString;
+    std::string         m_sleepString;
+
+    dxvk::high_resolution_clock::time_point m_lastUpdate
+      = dxvk::high_resolution_clock::now();
 
   };
 

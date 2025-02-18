@@ -18,6 +18,7 @@
 
 #include "dxvk_format.h"
 #include "dxvk_image.h"
+#include "dxvk_latency.h"
 
 namespace dxvk {
 
@@ -55,9 +56,10 @@ namespace dxvk {
    * \brief Queued frame
    */
   struct PresenterFrame {
-    uint64_t          frameId = 0u;
-    VkPresentModeKHR  mode    = VK_PRESENT_MODE_FIFO_KHR;
-    VkResult          result  = VK_NOT_READY;
+    uint64_t                frameId   = 0u;
+    Rc<DxvkLatencyTracker>  tracker   = nullptr;
+    VkPresentModeKHR        mode      = VK_PRESENT_MODE_FIFO_KHR;
+    VkResult                result    = VK_NOT_READY;
   };
 
   /**
@@ -122,10 +124,12 @@ namespace dxvk {
      * 
      * Presents the last successfuly acquired image.
      * \param [in] frameId Frame number.
-     *    Must increase monotonically.
+     * \param [in] tracker Latency tracker
      * \returns Status of the operation
      */
-    VkResult presentImage(uint64_t frameId);
+    VkResult presentImage(
+            uint64_t                frameId,
+      const Rc<DxvkLatencyTracker>& tracker);
 
     /**
      * \brief Signals a given frame
@@ -134,10 +138,12 @@ namespace dxvk {
      * the presenter signal with the given frame ID. Must not be
      * called before GPU work prior to the present submission has
      * completed in order to maintain consistency.
-     * \param [in] result Presentation result
-     * \param [in] frameId Frame number
+     * \param [in] frameId Frame ID
+     * \param [in] tracker Latency tracker
      */
-    void signalFrame(VkResult result, uint64_t frameId);
+    void signalFrame(
+            uint64_t                frameId,
+      const Rc<DxvkLatencyTracker>& tracker);
 
     /**
      * \brief Changes sync interval
@@ -211,6 +217,48 @@ namespace dxvk {
      */
     void destroyResources();
 
+    /**
+     * \brief Sets latency sleep mode
+     *
+     * Any changes will be applied on the next acquire operation.
+     * \param [in] sleepMode Latency mode info
+     */
+    void setLatencySleepModeNv(
+      const VkLatencySleepModeInfoNV& sleepMode);
+
+    /**
+     * \brief Sets latency marker
+     *
+     * Ignored if the current swapchain has not been
+     * created with low latency support.
+     * \param [in] frameId Frame ID
+     * \param [in] marker Marker
+     * \returns CPU timestamp of the marker
+     */
+    dxvk::high_resolution_clock::time_point setLatencyMarkerNv(
+            uint64_t                frameId,
+            VkLatencyMarkerNV       marker);
+
+    /**
+     * \brief Executes latency sleep
+     *
+     * Ignored if the current swapchain has not been
+     * created with low latency support.
+     * \returns Sleep duration
+     */
+    dxvk::high_resolution_clock::duration latencySleepNv();
+
+    /**
+     * \brief Queries latency timings
+     *
+     * \param [in] timingCount Number of timings to query
+     * \param [out] timings Latency timings
+     * \returns Number of frame reports returned
+     */
+    uint32_t getLatencyTimingsNv(
+            uint32_t                timingCount,
+            VkLatencyTimingsFrameReportNV* timings);
+
   private:
 
     Rc<DxvkDevice>              m_device;
@@ -252,13 +300,22 @@ namespace dxvk {
     std::optional<VkHdrMetadataEXT> m_hdrMetadata;
     bool                        m_hdrMetadataDirty = false;
 
+    std::optional<VkLatencySleepModeInfoNV> m_latencySleepMode;
+    VkSemaphore                 m_latencySemaphore = VK_NULL_HANDLE;
+    uint64_t                    m_latencySleepCounter = 0u;
+
+    bool                        m_latencySleepModeDirty = false;
+    bool                        m_latencySleepSupported = false;
+
     alignas(CACHE_LINE_SIZE)
     dxvk::mutex                 m_frameMutex;
     dxvk::condition_variable    m_frameCond;
+    dxvk::condition_variable    m_frameDrain;
     dxvk::thread                m_frameThread;
     std::queue<PresenterFrame>  m_frameQueue;
 
-    std::atomic<uint64_t>       m_lastFrameId = { 0ull };
+    uint64_t                    m_lastSignaled = 0u;
+    uint64_t                    m_lastCompleted = 0u;
 
     alignas(CACHE_LINE_SIZE)
     FpsLimiter                  m_fpsLimiter;
@@ -311,9 +368,13 @@ namespace dxvk {
 
     VkResult createSurface();
 
+    VkResult createLatencySemaphore();
+
     void destroySwapchain();
 
     void destroySurface();
+
+    void destroyLatencySemaphore();
 
     void waitForSwapchainFence(
             PresenterSync&            sync);

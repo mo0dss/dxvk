@@ -18,7 +18,7 @@ namespace dxvk {
   : D3D11CommonContext<D3D11ImmediateContext>(pParent, Device, 0, DxvkCsChunkFlag::SingleUse),
     m_csThread(Device, Device->createContext()),
     m_submissionFence(new sync::CallbackFence()),
-    m_flushTracker(pParent->GetOptions()->reproducibleCommandStream),
+    m_flushTracker(GetMaxFlushType(pParent, Device)),
     m_stagingBufferFence(new sync::Fence(0)),
     m_multithread(this, false, pParent->GetOptions()->enableContextLock),
     m_videoContext(this, Device) {
@@ -861,11 +861,17 @@ namespace dxvk {
   }
   
   
-  void D3D11ImmediateContext::EndFrame() {
+  void D3D11ImmediateContext::EndFrame(
+          Rc<DxvkLatencyTracker>      LatencyTracker) {
     D3D10DeviceLock lock = LockContext();
 
-    EmitCs<false>([] (DxvkContext* ctx) {
+    EmitCs<false>([
+      cTracker = std::move(LatencyTracker)
+    ] (DxvkContext* ctx) {
       ctx->endFrame();
+
+      if (cTracker && cTracker->needsAutoMarkers())
+        ctx->endLatencyTracking(cTracker);
     });
   }
 
@@ -914,11 +920,12 @@ namespace dxvk {
   
   
   void D3D11ImmediateContext::InjectCsChunk(
+          DxvkCsQueue                 Queue,
           DxvkCsChunkRef&&            Chunk,
           bool                        Synchronize) {
     // Do not update the sequence number when emitting a chunk
     // from an external source since that would break tracking
-    m_csThread.injectChunk(std::move(Chunk), Synchronize);
+    m_csThread.injectChunk(Queue, std::move(Chunk), Synchronize);
   }
 
 
@@ -1028,6 +1035,9 @@ namespace dxvk {
     // Notify the device that the context has been flushed,
     // this resets some resource initialization heuristics.
     m_parent->NotifyContextFlush();
+
+    // No point in tracking this across submissions
+    m_hasPendingMsaaResolve = false;
   }
 
 
@@ -1065,6 +1075,18 @@ namespace dxvk {
     stats.allocatedTotal += m_discardMemoryCounter;
     stats.allocatedSinceLastReset += m_discardMemoryCounter - m_discardMemoryOnFlush;
     return stats;
+  }
+
+
+  GpuFlushType D3D11ImmediateContext::GetMaxFlushType(
+          D3D11Device*    pParent,
+    const Rc<DxvkDevice>& Device) {
+    if (pParent->GetOptions()->reproducibleCommandStream)
+      return GpuFlushType::ExplicitFlush;
+    else if (Device->perfHints().preferRenderPassOps)
+      return GpuFlushType::ImplicitMediumHint;
+    else
+      return GpuFlushType::ImplicitWeakHint;
   }
 
 }

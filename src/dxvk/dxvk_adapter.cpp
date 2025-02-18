@@ -293,6 +293,14 @@ namespace dxvk {
       enabledFeatures.vk12.bufferDeviceAddress = VK_TRUE;
     }
 
+    // Disable NV_low_latency2 on 32-bit due to buggy latency sleep
+    // behaviour, or if explicitly set via the onfig file.
+    bool disableNvLowLatency2 = env::is32BitHostPlatform();
+    applyTristate(disableNvLowLatency2, instance->options().disableNvLowLatency2);
+
+    if (disableNvLowLatency2)
+      devExtensions.nvLowLatency2.setMode(DxvkExtMode::Disabled);
+
     // If we don't have pageable device memory support, at least use
     // the legacy AMD extension to ensure we can oversubscribe VRAM
     if (!m_deviceExtensions.supports(devExtensions.extPageableDeviceLocalMemory.name()))
@@ -1027,6 +1035,7 @@ namespace dxvk {
       &devExtensions.khrSwapchain,
       &devExtensions.khrWin32KeyedMutex,
       &devExtensions.nvDescriptorPoolOverallocation,
+      &devExtensions.nvLowLatency2,
       &devExtensions.nvRawAccessChains,
       &devExtensions.nvxBinaryImport,
       &devExtensions.nvxImageViewHandle,
@@ -1176,6 +1185,9 @@ namespace dxvk {
       enabledFeatures.nvDescriptorPoolOverallocation.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_POOL_OVERALLOCATION_FEATURES_NV;
       enabledFeatures.nvDescriptorPoolOverallocation.pNext = std::exchange(enabledFeatures.core.pNext, &enabledFeatures.nvDescriptorPoolOverallocation);
     }
+
+    if (devExtensions.nvLowLatency2.revision() >= 2)
+      enabledFeatures.nvLowLatency2 = VK_TRUE;
 
     if (devExtensions.nvRawAccessChains) {
       enabledFeatures.nvRawAccessChains.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAW_ACCESS_CHAINS_FEATURES_NV;
@@ -1332,6 +1344,8 @@ namespace dxvk {
       "\n  presentWait                            : ", features.khrPresentWait.presentWait ? "1" : "0",
       "\n", VK_NV_DESCRIPTOR_POOL_OVERALLOCATION_EXTENSION_NAME,
       "\n  descriptorPoolOverallocation           : ", features.nvDescriptorPoolOverallocation.descriptorPoolOverallocation ? "1" : "0",
+      "\n", VK_NV_LOW_LATENCY_2_EXTENSION_NAME,
+      "\n  extension supported                    : ", features.nvLowLatency2 ? "1" : "0",
       "\n", VK_NV_RAW_ACCESS_CHAINS_EXTENSION_NAME,
       "\n  shaderRawAccessChains                  : ", features.nvRawAccessChains.shaderRawAccessChains ? "1" : "0",
       "\n", VK_NVX_BINARY_IMPORT_EXTENSION_NAME,

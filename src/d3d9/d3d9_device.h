@@ -800,7 +800,8 @@ namespace dxvk {
     void Flush();
     void FlushAndSync9On12();
 
-    void EndFrame();
+    void BeginFrame(Rc<DxvkLatencyTracker> LatencyTracker, uint64_t FrameId);
+    void EndFrame(Rc<DxvkLatencyTracker> LatencyTracker);
 
     void UpdateActiveRTs(uint32_t index);
 
@@ -1395,6 +1396,8 @@ namespace dxvk {
       return m_state.renderTargets[Index] != nullptr
         && !m_state.renderTargets[Index]->IsNull();
     }
+
+    GpuFlushType GetMaxFlushType() const;
 
     Com<D3D9InterfaceEx>            m_parent;
     D3DDEVTYPE                      m_deviceType;

@@ -4,6 +4,7 @@
 
 #include "../dxvk/hud/dxvk_hud.h"
 
+#include "../dxvk/dxvk_latency.h"
 #include "../dxvk/dxvk_swapchain_blitter.h"
 
 #include "../util/sync/sync_signal.h"
@@ -107,6 +108,7 @@ namespace dxvk {
     Rc<Presenter>             m_presenter;
 
     Rc<DxvkSwapchainBlitter>  m_blitter;
+    Rc<DxvkLatencyTracker>    m_latency;
 
     small_vector<Com<D3D11Texture2D, false>, 4> m_backBuffers;
 
@@ -122,6 +124,8 @@ namespace dxvk {
 
     dxvk::mutex               m_frameStatisticsLock;
     DXGI_VK_FRAME_STATISTICS  m_frameStatistics = { };
+
+    Rc<hud::HudLatencyItem>   m_latencyHud;
 
     Rc<DxvkImageView> GetBackBufferView();
 
@@ -139,12 +143,16 @@ namespace dxvk {
 
     void DestroyFrameLatencyEvent();
 
+    void DestroyLatencyTracker();
+
     void SyncFrameLatency();
 
     uint32_t GetActualFrameLatency();
-    
+
     VkSurfaceFormatKHR GetSurfaceFormat(DXGI_FORMAT Format);
-    
+
+    Com<D3D11ReflexDevice> GetReflexDevice();
+
     std::string GetApiName() const;
 
   };
