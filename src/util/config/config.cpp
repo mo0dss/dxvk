@@ -82,7 +82,6 @@ namespace dxvk {
     /* The Evil Within: Submits command lists     *
      * multiple times                             */
     { R"(\\EvilWithin(Demo)?\.exe$)", {{
-      { "d3d11.dcSingleUseMode",            "False" },
       { "d3d11.cachedDynamicResources",     "vi"   },
     }} },
     /* Far Cry 3: Assumes clear(0.5) on an UNORM  *
@@ -160,10 +159,6 @@ namespace dxvk {
     /* NieR Replicant                             */
     { R"(\\NieR Replicant ver\.1\.22474487139\.exe)", {{
       { "d3d11.cachedDynamicResources",     "vi"   },
-    }} },
-    /* SteamVR performance test                   */
-    { R"(\\vr\.exe$)", {{
-      { "d3d11.dcSingleUseMode",            "False" },
     }} },
     /* Hitman 2 - requires AGS library      */
     { R"(\\HITMAN2\.exe$)", {{
@@ -291,12 +286,11 @@ namespace dxvk {
     /* Final Fantasy XV: VXAO does thousands of   *
      * draw calls with the same UAV bound         */
     { R"(\\ffxv_s\.exe$)", {{
-      { "d3d11.ignoreGraphicsBarriers",     "True" },
+      { "d3d11.relaxedGraphicsBarriers",    "True" },
     }} },
     /* God of War - relies on NVAPI/AMDAGS for    *
      * barrier stuff, needs nvapi for DLSS        */
     { R"(\\GoW\.exe$)", {{
-      { "d3d11.ignoreGraphicsBarriers",     "True" },
       { "d3d11.relaxedBarriers",            "True" },
       { "dxgi.hideNvidiaGpu",               "False" },
       { "dxgi.maxFrameLatency",             "1"    },
@@ -334,7 +328,7 @@ namespace dxvk {
      * presumably for culling, which doesn't play *
      * nicely with D3D11 without vendor libraries */
     { R"(\\Stray-Win64-Shipping\.exe$)", {{
-      { "d3d11.ignoreGraphicsBarriers",     "True" },
+      { "d3d11.relaxedGraphicsBarriers",    "True" },
     }} },
     /* Metal Gear Solid V: Ground Zeroes          *
      * Texture quality can break at high vram     */
@@ -350,11 +344,6 @@ namespace dxvk {
      * Games speed up above 60 fps                */
     { R"(\\MSFC\.exe$)", {{
       { "dxgi.maxFrameRate",                "60" },
-    }} },
-    /* Cardfight!! Vanguard Dear Days:            *
-     * Submits command lists multiple times       */
-    { R"(\\VG2\.exe$)", {{
-      { "d3d11.dcSingleUseMode",            "False" },
     }} },
     /* Battlefield: Bad Company 2                 *
      * Gets rid of black flickering               */
@@ -384,10 +373,6 @@ namespace dxvk {
     { R"(\\CrashBandicootNSaneTrilogy\.exe$)", {{
       { "dxgi.syncInterval",                "1"   },
     }} },
-    /* SnowRunner                                 */
-    { R"(\\SnowRunner\.exe$)", {{
-      { "d3d11.dcSingleUseMode",            "False" },
-    }} },
     /* Fallout 76
      * Game tries to be too "smart" and changes sync
      * interval based on performance (in fullscreen)
@@ -409,10 +394,6 @@ namespace dxvk {
     { R"(\\BLADESTORM Nightmare\\Launch_(EA|JP)\.exe$)", {{
       { "dxgi.maxFrameRate",                "60"  },
     }} },
-    /* Ghost Recon Wildlands                      */
-    { R"(\\GRW\.exe$)", {{
-      { "d3d11.dcSingleUseMode",            "False" },
-    }} },
     /* Vindictus d3d11 CPU bound perf, and work   *
      * around the game not properly initializing  *
      * some of its constant buffers after discard */
@@ -433,7 +414,7 @@ namespace dxvk {
      * and assumes that AMD GPUs do not expose    *
      * native command lists for AGS usage         */
     { R"(\\granblue_fantasy_relink\.exe$)", {{
-      { "d3d11.ignoreGraphicsBarriers",     "True"  },
+      { "d3d11.relaxedGraphicsBarriers",    "True"  },
       { "d3d11.exposeDriverCommandLists",   "False" },
       { "dxgi.hideNvidiaGpu",               "False" },
     }} },
@@ -477,10 +458,10 @@ namespace dxvk {
     { R"(\\FarCry(5|NewDawn)\.exe$)", {{
       { "d3d11.zeroInitWorkgroupMemory",    "True" },
     }} },
-    /* Cardfight!! Vanguard Dear Days 2 - Broken   *
-     * effects and Invisible cards in battles      */
-    { R"(\\VGDD2\.exe$)", {{
-      { "d3d11.dcSingleUseMode",            "False" },
+    /* Watch Dogs 2 - ships broken compute shaders *
+     * with no barriers when they are needed       */
+    { R"(\\WatchDogs2\.exe$)", {{
+      { "d3d11.forceComputeUavBarriers",    "True" },
     }} },
 
     /**********************************************/
@@ -722,7 +703,7 @@ namespace dxvk {
       { "d3d9.maxFrameRate",                "60" },
     }} },
     /* Escape from Tarkov launcher
-       Same issue as Warhammer: RoR above       */
+       Work around partial presentation issues  */
     { R"(\\BsgLauncher\.exe$)", {{
       { "d3d9.shaderModel",                 "1" },
     }} },
@@ -1040,6 +1021,21 @@ namespace dxvk {
       { "d3d9.customVendorId",              "1002" },
       { "d3d9.maxAvailableMemory",          "2048" },
       { "d3d9.memoryTrackTest",             "True" },
+    }} },
+    /* CivCity: Rome                              *
+     * Enables soft real-time shadows             */
+    { R"(\\CivCity Rome\.exe$)", {{
+      { "d3d9.customVendorId",              "10de" },
+    }} },
+    /* Silent Hill 2 (2001)                       *
+     * The Enhancements mod configures the        *
+     * swapchain to only have a single backbuffer *
+     * and then calls GetFrontBufferData after    *
+     * rendering to the backbuffer. This causes   *
+     * it to get the wrong data from              *
+     * GetFrontBufferData().                      */
+    { R"(\\sh2pc\.exe$)", {{
+      { "d3d9.extraFrontbuffer",            "True" },
     }} },
 
     /**********************************************/

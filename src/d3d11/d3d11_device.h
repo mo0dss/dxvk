@@ -429,6 +429,13 @@ namespace dxvk {
       m_initializer->NotifyContextFlush();
     }
     
+    void InitShaderIcb(
+            D3D11CommonShader*          pShader,
+            size_t                      IcbSize,
+      const void*                       pIcbData) {
+      return m_initializer->InitShaderIcb(pShader, IcbSize, pIcbData);
+    }
+
     VkPipelineStageFlags GetEnabledShaderStages() const {
       return m_dxvkDevice->getShaderPipelineStages();
     }
@@ -472,13 +479,13 @@ namespace dxvk {
       const Rc<DxvkAdapter>&  Adapter);
 
     DxvkBarrierControlFlags GetOptionsBarrierControlFlags() {
-      DxvkBarrierControlFlags barrierControl;
+      DxvkBarrierControlFlags barrierControl = 0u;
 
       if (m_d3d11Options.relaxedBarriers)
-        barrierControl.set(DxvkBarrierControl::IgnoreWriteAfterWrite);
+        barrierControl.set(DxvkBarrierControl::ComputeAllowWriteOnlyOverlap);
 
-      if (m_d3d11Options.ignoreGraphicsBarriers)
-        barrierControl.set(DxvkBarrierControl::IgnoreGraphicsBarriers);
+      if (m_d3d11Options.relaxedBarriers || m_d3d11Options.relaxedGraphicsBarriers)
+        barrierControl.set(DxvkBarrierControl::GraphicsAllowReadWriteOverlap);
 
       return barrierControl;
     }
