@@ -467,6 +467,10 @@ namespace dxvk {
     { R"(\\Wargame European Escalation\\WarGame\.exe$)", {{
       { "dxgi.hideNvidiaGpu",               "True" },
     }} },
+    /* Guilty Gear - Speeds up above 60 fps         */
+    { R"(\\GuiltyGear\.exe$)", {{
+      { "dxgi.maxFrameRate",                  "60" },
+    }} },
 
     /**********************************************/
     /* D3D9 GAMES                                 */
@@ -755,9 +759,11 @@ namespace dxvk {
     { R"(\\SR2_pc\.exe$)", {{
       { "d3d9.textureMemory",                  "0" },
     }} },
-    /* Witcher 1: Very long loading times         */
+    /* Witcher 1: Very long loading times         *
+     * Inventory hair explosion at very high fps  */
     { R"(\\witcher\.exe$)", {{
       { "d3d9.cachedDynamicBuffers",        "True" },
+      { "d3d9.maxFrameRate",                 "300" },
     }} },
     /* Guitar Hero World Tour                     *
      * Very prone to address space crashes        */
@@ -1076,6 +1082,11 @@ namespace dxvk {
      * modes/resolutions are advertised           */
     { R"(\\AN2\.dat$)", {{
       { "d3d9.modeCountCompatibility",      "True" },
+    }} },
+    /* Psi-Ops: The Mindgate Conspiracy           *
+     * Broken input and physics above 60 fps      */
+    { R"(\\PsiOps\.exe$)", {{
+      { "d3d9.maxFrameRate",                  "60" },
     }} },
 
     /**********************************************/
