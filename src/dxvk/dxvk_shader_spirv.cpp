@@ -41,7 +41,7 @@ namespace dxvk {
     else if (m_debugName.empty())
       m_debugName = std::to_string(getCookie());
 
-    m_code = SpirvCompressedBuffer(code);
+    m_code = std::make_unique<SpirvCompressedBuffer>(code);
   }
 
 
@@ -63,7 +63,7 @@ namespace dxvk {
   SpirvCodeBuffer DxvkSpirvShader::getCode(
     const DxvkShaderBindingMap*       bindings,
     const DxvkShaderLinkage*          linkage) {
-    SpirvCodeBuffer spirvCode = m_code.decompress();
+    SpirvCodeBuffer spirvCode = m_code->decompress();
     patchResourceBindingsAndIoLocations(spirvCode, bindings, linkage);
 
     // Undefined I/O handling is coarse, and not supported for tessellation shaders.
@@ -107,7 +107,7 @@ namespace dxvk {
 
 
   void DxvkSpirvShader::dump(std::ostream& outputStream) {
-    m_code.decompress().store(outputStream);
+    m_code->decompress().store(outputStream);
   }
 
 

@@ -108,8 +108,8 @@ namespace dxvk {
 
     DxvkSpirvShaderCreateInfo     m_info  = { };
 
-    SpirvCompressedBuffer         m_code;
-    DxvkPipelineLayoutBuilder     m_layout;
+    std::unique_ptr<SpirvCompressedBuffer> m_code;
+    DxvkPipelineLayoutBuilder              m_layout;
 
     std::string                   m_debugName;
     uint32_t                      m_pushConstantStructId = 0u;

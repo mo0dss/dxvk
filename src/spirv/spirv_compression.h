@@ -40,6 +40,7 @@ namespace dxvk {
   private:
     uint32_t  m_size            = 0;
 
+    alignas(CACHE_LINE_SIZE)
     std::vector<uint8_t> m_compressed_code;
     size_t               m_compressed_size = 0;
   };
