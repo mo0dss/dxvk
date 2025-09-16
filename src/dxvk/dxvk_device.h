@@ -28,7 +28,11 @@
 namespace dxvk {
   
   class DxvkInstance;
+  class DxvkShaderCache;
 
+  class DxvkIrShader;
+  class DxvkIrShaderConverter;
+  class DxvkIrShaderCreateInfo;
 
   /**
    * \brief Device performance hints
@@ -213,6 +217,18 @@ namespace dxvk {
     std::optional<DxvkFormatLimits> getFormatLimits(
       const DxvkFormatQuery&          query) const {
       return m_adapter->getFormatLimits(query);
+    }
+
+
+    /**
+     * \brief Queries default shader compile options
+     *
+     * Can be overridden by the client API. Only applies to
+     * shaders using internal IR rather than SPIR-V binaries.
+     * \returns Device-global shader compile options.
+     */
+    DxvkShaderOptions getShaderCompileOptions() const {
+      return m_shaderOptions;
     }
 
     /**
@@ -430,6 +446,22 @@ namespace dxvk {
     VkPipeline createBuiltInGraphicsPipeline(
       const DxvkPipelineLayout*             layout,
       const util::DxvkBuiltInGraphicsState& state);
+
+    /**
+     * \brief Creates IR shader from cache
+     *
+     * Will try to look up and retrive the given shader from
+     * the shader cache. If no shader converter is provided
+     * and the look-up fails, this returns \c nullptr.
+     * \param [in] name Shader name
+     * \param [in] createInfo Shader create info
+     * \param [in] converter Shader converter to
+     *    use when cache look-upo fails.
+     */
+    Rc<DxvkShader> createCachedShader(
+      const std::string&                    name,
+      const DxvkIrShaderCreateInfo&         createInfo,
+      const Rc<DxvkIrShaderConverter>&      converter);
 
     /**
      * \brief Imports a buffer
@@ -676,21 +708,27 @@ namespace dxvk {
 
     DxvkDeviceFeatures          m_features;
     DxvkDeviceInfo              m_properties;
-    
+
+    DxvkShaderOptions           m_shaderOptions;
+
     DxvkDevicePerfHints         m_perfHints;
     DxvkObjects                 m_objects;
 
     sync::Spinlock              m_statLock;
     DxvkStatCounters            m_statCounters;
-    
+
     DxvkRecycler<DxvkCommandList, 16> m_recycledCommandLists;
-    
+
     DxvkSubmissionQueue         m_submissionQueue;
 
+    Rc<DxvkShaderCache>         m_shaderCache;
+
     DxvkDevicePerfHints getPerfHints();
-    
+
     void recycleCommandList(
       const Rc<DxvkCommandList>& cmdList);
+
+    void determineShaderOptions();
 
   };
   

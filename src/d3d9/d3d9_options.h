@@ -119,6 +119,9 @@ namespace dxvk {
     /// Forces sample rate shading
     bool forceSampleRateShading;
 
+    /// Allow D3DLOCK_DISCARD
+    bool allowDiscard;
+
     /// Enumerate adapters by displays
     bool enumerateByDisplays;
 
@@ -162,11 +165,14 @@ namespace dxvk {
     /// Enable depth texcoord Z (Dref) scaling (D3D8 quirk)
     int32_t drefScaling;
 
-    /// Enable slow sincos emulation
-    bool sincosEmulation;
-
     /// Add an extra front buffer to make GetFrontBufferData() work correctly when the swapchain only has a single buffer
     bool extraFrontbuffer;
+
+    /// Use the uber shader for fixed function vertex shaders.
+    bool ffUbershaderVS;
+
+    /// Use the uber shader for fixed function fragment shaders.
+    bool ffUbershaderFS;
   };
 
 }
