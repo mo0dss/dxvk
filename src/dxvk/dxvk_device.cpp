@@ -28,7 +28,7 @@ namespace dxvk {
     determineShaderOptions();
 
     if (env::getEnvVar("DXVK_SHADER_CACHE") != "0" && DxvkShader::getShaderDumpPath().empty())
-      m_shaderCache = new DxvkShaderCache(DxvkShaderCache::getDefaultFilePaths());
+      m_shaderCache = DxvkShaderCache::getInstance();
   }
   
   
@@ -742,8 +742,8 @@ namespace dxvk {
     }
 
     // Converting unsigned integers to float should return an unsigned float,
-    // but Nvidia drivers don't agree
-    if (m_adapter->matchesDriver(VK_DRIVER_ID_NVIDIA_PROPRIETARY))
+    // but Nvidia drivers prior to 580 don't agree
+    if (m_adapter->matchesDriver(VK_DRIVER_ID_NVIDIA_PROPRIETARY, Version(), Version(580u, 0u, 0u)))
       m_shaderOptions.flags.set(DxvkShaderCompileFlag::LowerItoF);
 
     // Forward UBO device limit as-is
@@ -814,6 +814,21 @@ namespace dxvk {
 
     if (m_features.khrShaderFloatControls2.shaderFloatControls2)
       m_shaderOptions.spirv.set(DxvkShaderSpirvFlag::SupportsFloatControls2);
+
+    // Set up resource indexing flags
+    if (m_features.core.features.shaderUniformBufferArrayDynamicIndexing &&
+        m_features.core.features.shaderSampledImageArrayDynamicIndexing &&
+        m_features.core.features.shaderStorageBufferArrayDynamicIndexing &&
+        m_features.core.features.shaderStorageImageArrayDynamicIndexing &&
+        m_features.vk12.shaderUniformTexelBufferArrayDynamicIndexing &&
+        m_features.vk12.shaderStorageTexelBufferArrayDynamicIndexing &&
+        m_features.vk12.shaderUniformBufferArrayNonUniformIndexing &&
+        m_features.vk12.shaderSampledImageArrayNonUniformIndexing &&
+        m_features.vk12.shaderStorageBufferArrayNonUniformIndexing &&
+        m_features.vk12.shaderStorageImageArrayNonUniformIndexing &&
+        m_features.vk12.shaderUniformTexelBufferArrayNonUniformIndexing &&
+        m_features.vk12.shaderStorageTexelBufferArrayNonUniformIndexing)
+      m_shaderOptions.spirv.set(DxvkShaderSpirvFlag::SupportsResourceIndexing);
   }
 
 }
