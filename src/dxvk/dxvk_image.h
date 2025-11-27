@@ -755,14 +755,13 @@ namespace dxvk {
       const DxvkImageViewKey& info);
 
     /**
-     * \brief Tracks subresource initialization
+     * \brief Checks whether an image subresource is initialized
      *
-     * Initialization happens when transitioning the image
-     * away from \c PREINITIALIZED or \c UNDEFINED layouts.
-     * \param [in] subresources Subresource range
+     * \param [in] subresource The subresource to query
+     * \returns \c true if the given subresource is initialized
      */
-    void trackInitialization(
-      const VkImageSubresourceRange& subresources);
+    bool isInitialized(
+      const VkImageSubresource& subresource) const;
 
     /**
      * \brief Checks whether subresources are initialized
@@ -772,6 +771,39 @@ namespace dxvk {
      */
     bool isInitialized(
       const VkImageSubresourceRange& subresources) const;
+
+    /**
+     * \brief Queries current layout of an image subresource
+     *
+     * \param [in] subresource The subresource. Note that the aspect
+     *    mask must not have multiple planes set for planar images.
+     * \returns Current layout of the given image subresource
+     */
+    VkImageLayout queryLayout(const VkImageSubresource& subresource) const {
+      if (m_globalLayout != VK_IMAGE_LAYOUT_MAX_ENUM)
+        return m_globalLayout;
+
+      uint32_t index = computeSubresourceIndex(subresource);
+      return m_localLayouts[index];
+    }
+
+    /**
+     * \biref Queries current layout of a subresource range
+     *
+     * If layouts diverge, this returns \c VK_IMAGE_LAYOUT_MAX_ENUM,
+     * and individual subresources must be queried manually.
+     * \param [in] subresources Subresource range to query
+     * \returns Current layout of the subresource range
+     */
+    VkImageLayout queryLayout(const VkImageSubresourceRange& subresources) const;
+
+    /**
+     * \brief Updates per-subresource layout tracking
+     *
+     * \param [in] subresources Subresource range to transition
+     * \param [in] layout New layout for the subresource range
+     */
+    void trackLayout(const VkImageSubresourceRange& subresources, VkImageLayout layout);
 
     /**
      * \brief Sets debug name for the backing resource
@@ -806,8 +838,9 @@ namespace dxvk {
     Rc<DxvkResourceAllocation>  m_storage     = nullptr;
 
     small_vector<VkFormat, 4>   m_viewFormats;
-    small_vector<uint16_t, 8>   m_uninitializedMipsPerLayer = { };
-    uint32_t                    m_uninitializedSubresourceCount = 0u;
+
+    VkImageLayout               m_globalLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    small_vector<VkImageLayout, 16> m_localLayouts;
 
     dxvk::mutex                 m_viewMutex;
     std::unordered_map<DxvkImageViewKey,
@@ -830,6 +863,16 @@ namespace dxvk {
             DxvkDevice*           device,
       const VkImageCreateInfo&    createInfo,
       const DxvkSharedHandleInfo& sharingInfo) const;
+
+    uint32_t computeSubresourceIndex(const VkImageSubresource& subresource) const {
+      return subresource.arrayLayer
+        + m_info.numLayers * (subresource.mipLevel
+        + m_info.mipLevels * vk::getPlaneIndex(subresource.aspectMask));
+    }
+
+    uint32_t computeSubresourceCount() const {
+      return m_info.numLayers * m_info.mipLevels * vk::getPlaneCount(formatInfo()->aspectMask);
+    }
 
   };
 
