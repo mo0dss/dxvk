@@ -1120,19 +1120,20 @@ namespace dxvk {
 
 
   void D3D9SwapChainEx::UpdateTargetFrameRate(uint32_t SyncInterval) {
-    double frameRateOption = double(m_parent->GetOptions()->maxFrameRate);
-    double frameRate = std::max(frameRateOption, 0.0);
+    double frameRate = double(m_parent->GetOptions()->maxFrameRate);
 
-    if (frameRateOption == 0.0 && SyncInterval) {
-      bool engageLimiter = SyncInterval > 1u || m_monitor ||
-        m_device->config().latencySleep == Tristate::True;
+    if (frameRate != -1.0) {
+      if (frameRate == 0.0 && SyncInterval) {
+        bool engageLimiter = SyncInterval > 1u || m_monitor ||
+          m_device->config().latencySleep == Tristate::True;
 
-      if (engageLimiter)
-        frameRate = -m_displayRefreshRate / double(SyncInterval);
+        if (engageLimiter)
+          frameRate = -m_displayRefreshRate / double(SyncInterval);
+      }
+
+      m_wctx->presenter->setFrameRateLimit(frameRate, GetActualFrameLatency());
+      m_targetFrameRate = frameRate;
     }
-
-    m_wctx->presenter->setFrameRateLimit(frameRate, GetActualFrameLatency());
-    m_targetFrameRate = frameRate;
   }
 
 
@@ -1182,7 +1183,7 @@ namespace dxvk {
         return { VK_FORMAT_B5G6R5_UNORM_PACK16, m_colorspace };
 
       case D3D9Format::A16B16G16R16F: {
-        if (!m_unlockAdditionalFormats) {
+        if (!m_parent->HasFormatsUnlocked()) {
           Logger::warn(str::format("D3D9SwapChainEx: Unexpected format: ", format));
           return VkSurfaceFormatKHR { };
         }
@@ -1481,7 +1482,14 @@ namespace dxvk {
   }
 
   void STDMETHODCALLTYPE D3D9VkExtSwapchain::UnlockAdditionalFormats() {
-    m_swapchain->m_unlockAdditionalFormats = true;
+    Logger::err("ID3D9VkExtSwapchain::UnlockAdditionalFormats is deprecated.\n"
+                "Please use ID3D9VkExtInterface::UnlockAdditionalFormats instead.\n");
+
+    Com<ID3D9VkExtInterface> iface;
+
+    if (SUCCEEDED(m_swapchain->GetParent()->QueryInterface(
+        __uuidof(ID3D9VkExtInterface), reinterpret_cast<void**>(&iface))))
+      iface->UnlockAdditionalFormats();
   }
 
 }

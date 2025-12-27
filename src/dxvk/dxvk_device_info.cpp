@@ -17,6 +17,7 @@ namespace dxvk {
 
   #define EXTENSIONS_WITH_FEATURES                 \
     HANDLE_EXT(extAttachmentFeedbackLoopLayout);   \
+    HANDLE_EXT(extBorderColorSwizzle);             \
     HANDLE_EXT(extConservativeRasterization);      \
     HANDLE_EXT(extCustomBorderColor);              \
     HANDLE_EXT(extDepthClipEnable);                \
@@ -34,6 +35,7 @@ namespace dxvk {
     HANDLE_EXT(extNonSeamlessCubeMap);             \
     HANDLE_EXT(extPageableDeviceLocalMemory);      \
     HANDLE_EXT(extRobustness2);                    \
+    HANDLE_EXT(extSampleLocations);                \
     HANDLE_EXT(extShaderModuleIdentifier);         \
     HANDLE_EXT(extShaderStencilExport);            \
     HANDLE_EXT(extSwapchainColorSpace);            \
@@ -48,9 +50,12 @@ namespace dxvk {
     HANDLE_EXT(khrMaintenance7);                   \
     HANDLE_EXT(khrPipelineLibrary);                \
     HANDLE_EXT(khrPresentId);                      \
+    HANDLE_EXT(khrPresentId2);                     \
     HANDLE_EXT(khrPresentWait);                    \
+    HANDLE_EXT(khrPresentWait2);                   \
     HANDLE_EXT(khrShaderFloatControls2);           \
     HANDLE_EXT(khrSwapchain);                      \
+    HANDLE_EXT(khrSwapchainMaintenance1);          \
     HANDLE_EXT(khrSwapchainMutableFormat);         \
     HANDLE_EXT(khrWin32KeyedMutex);                \
     HANDLE_EXT(nvLowLatency2);                     \
@@ -67,6 +72,7 @@ namespace dxvk {
     HANDLE_EXT(extLineRasterization);              \
     HANDLE_EXT(extMultiDraw);                      \
     HANDLE_EXT(extRobustness2);                    \
+    HANDLE_EXT(extSampleLocations);                \
     HANDLE_EXT(extTransformFeedback);              \
     HANDLE_EXT(extVertexAttributeDivisor);         \
     HANDLE_EXT(khrMaintenance5);                   \
@@ -312,6 +318,25 @@ namespace dxvk {
         }), extensions.end());
     }
 
+    // If multiple extensions provide the same functionality, remove any
+    // deprecated aliases so that we always use the latest iteration.
+    std::array<std::pair<const char*, const char*>, 1u> aliases = {{
+      { VK_KHR_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME,
+        VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME },
+    }};
+
+    for (const auto& alias : aliases) {
+      auto a = vk::makeExtension(alias.first);
+      auto b = vk::makeExtension(alias.second);
+
+      auto aIter = std::lower_bound(extensions.begin(), extensions.end(), a, vk::SortExtension());
+      auto bIter = std::lower_bound(extensions.begin(), extensions.end(), b, vk::SortExtension());
+
+      if (aIter != extensions.end() && !vk::SortExtension()(a, *aIter)
+       && bIter != extensions.end() && !vk::SortExtension()(b, *bIter))
+        extensions.erase(bIter);
+    }
+
     // HACK: Use mesh shader extension support to determine whether we're
     // running on older (pre-Turing) Nvidia GPUs.
     m_hasMeshShader = std::find_if(extensions.begin(), extensions.end(),
@@ -500,9 +525,23 @@ namespace dxvk {
       m_featuresSupported.extLineRasterization.smoothLines = VK_FALSE;
     }
 
+    // Ensure we only enable one of present_id or present_id_2
+    if (m_featuresSupported.khrPresentId2.presentId2)
+      m_featuresSupported.khrPresentId.presentId = VK_FALSE;
+
     // Sanitize features with other feature dependencies
     if (!m_featuresSupported.core.features.shaderInt16)
       m_featuresSupported.vk11.storagePushConstant16 = VK_FALSE;
+
+    if (!m_featuresSupported.khrPresentId2.presentId2)
+      m_featuresSupported.khrPresentWait2.presentWait2 = VK_FALSE;
+
+    if (!m_featuresSupported.khrPresentId.presentId)
+      m_featuresSupported.khrPresentWait.presentWait = VK_FALSE;
+
+    if (!m_featuresSupported.khrPresentId.presentId
+     && !m_featuresSupported.khrPresentId2.presentId2)
+      m_featuresSupported.nvLowLatency2 = VK_FALSE;
   }
 
 
@@ -786,6 +825,10 @@ namespace dxvk {
       /* Allows sampling currently bound render targets for client APIs */
       ENABLE_EXT_FEATURE(extAttachmentFeedbackLoopLayout, attachmentFeedbackLoopLayout, false),
 
+      /* Fix some border color jank due to hardware differences */
+      ENABLE_EXT_FEATURE(extBorderColorSwizzle, borderColorSwizzle, false),
+      ENABLE_EXT_FEATURE(extBorderColorSwizzle, borderColorSwizzleFromImage, false),
+
       /* Enables client API features */
       ENABLE_EXT(extConservativeRasterization, false),
 
@@ -811,6 +854,7 @@ namespace dxvk {
       ENABLE_EXT_FEATURE(extExtendedDynamicState3, extendedDynamicState3RasterizationSamples, false),
       ENABLE_EXT_FEATURE(extExtendedDynamicState3, extendedDynamicState3SampleMask, false),
       ENABLE_EXT_FEATURE(extExtendedDynamicState3, extendedDynamicState3LineRasterizationMode, false),
+      ENABLE_EXT_FEATURE(extExtendedDynamicState3, extendedDynamicState3SampleLocationsEnable, false),
 
       /* Enables client API features */
       ENABLE_EXT_FEATURE(extFragmentShaderInterlock, fragmentShaderSampleInterlock, false),
@@ -846,6 +890,9 @@ namespace dxvk {
       ENABLE_EXT_FEATURE(extRobustness2, robustBufferAccess2, true),
       ENABLE_EXT_FEATURE(extRobustness2, robustImageAccess2, false),
       ENABLE_EXT_FEATURE(extRobustness2, nullDescriptor, true),
+
+      /* Sample locations, used to "disable" MSAA rendering */
+      ENABLE_EXT(extSampleLocations, false),
 
       /* Shader module identifier, used for pipeline lifetime management in 32-bit */
       ENABLE_EXT_FEATURE(extShaderModuleIdentifier, shaderModuleIdentifier, false),
@@ -885,13 +932,19 @@ namespace dxvk {
 
       /* Present wait, used for frame pacing and statistics */
       ENABLE_EXT_FEATURE(khrPresentId, presentId, false),
+      ENABLE_EXT_FEATURE(khrPresentId2, presentId2, false),
       ENABLE_EXT_FEATURE(khrPresentWait, presentWait, false),
+      ENABLE_EXT_FEATURE(khrPresentWait2, presentWait2, false),
 
       /* Used for shader compilation in addition to regular float_controls features */
       ENABLE_EXT_FEATURE(khrShaderFloatControls2, shaderFloatControls2, false),
 
       /* Swapchain, needed for presentation */
       ENABLE_EXT(khrSwapchain, true),
+
+      /* Swapchain maintenance, used to implement proper synchronization
+       * and dynamic present modes to avoid swapchain recreation */
+      ENABLE_EXT_FEATURE(khrSwapchainMaintenance1, swapchainMaintenance1, false),
 
       /* Mutable format used to change srgb-ness of swapchain views */
       ENABLE_EXT(khrSwapchainMutableFormat, false),
