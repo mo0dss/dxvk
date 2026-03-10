@@ -213,6 +213,13 @@ namespace dxvk::str {
     }
   }
 
+  inline void wstrlcpy(wchar_t* dst, const wchar_t* src, size_t count) {
+    if (count > 0) {
+      std::wcsncpy (dst, src, count - 1);
+      dst[count - 1] = '\0';
+    }
+  }
+
   /**
    * \brief Split string at one or more delimiters characters
    * 

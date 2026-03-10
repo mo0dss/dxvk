@@ -108,6 +108,16 @@ namespace dxvk {
     Logger::warn("D3DKMTShareObjects: Not available on this platform.");
     return -1;
   }
+
+  NTSTATUS WINAPI D3DKMTQueryRemoteVidPnSourceFromGdiDisplayName(D3DKMT_QUERYREMOTEVIDPNSOURCEFROMGDIDISPLAYNAME *unnamedParam1) {
+    Logger::warn("D3DKMTQueryRemoteVidPnSourceFromGdiDisplayName: Not available on this platform.");
+    return -1;
+  }
+
+  NTSTATUS WINAPI D3DKMTWaitForVerticalBlankEvent(const D3DKMT_WAITFORVERTICALBLANKEVENT *unnamedParam1) {
+    Logger::warn("D3DKMTWaitForVerticalBlankEvent: Not available on this platform.");
+    return -1;
+  }
 #else
   static NTSTATUS WINAPI NoD3DKMTAcquireKeyedMutex(D3DKMT_ACQUIREKEYEDMUTEX *desc) {
     return -1;

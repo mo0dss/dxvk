@@ -134,6 +134,7 @@ namespace dxvk {
     DxgiMonitorInfo* m_monitorInfo = nullptr;
     HMONITOR         m_monitor     = nullptr;
 
+    D3DDDI_VIDEO_PRESENT_SOURCE_ID m_vpn_id = 0;
     wsi::WsiDisplayMetadata m_metadata = {};
 
     D3DDestructionNotifier m_destructionNotifier;
@@ -141,7 +142,9 @@ namespace dxvk {
     static void FilterModesByDesc(
             std::vector<DXGI_MODE_DESC1>& Modes,
       const DXGI_MODE_DESC1&              TargetMode);
-    
+
+    void QueryVideoPresentNetworkID();
+
     void CacheMonitorData();
 
   };

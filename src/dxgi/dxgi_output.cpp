@@ -20,6 +20,11 @@
 
 namespace dxvk {
 
+  template <size_t N>
+  static void copyToStringArray(wchar_t (&dst)[N], const wchar_t* src) {
+    dxvk::str::wstrlcpy(dst, src, N);
+  }
+
   DxgiOutput::DxgiOutput(
     const Com<DxgiFactory>& factory,
     const Com<DxgiAdapter>& adapter,
@@ -29,6 +34,7 @@ namespace dxvk {
     m_monitorInfo ( factory->GetMonitorInfo() ),
     m_monitor     ( monitor ),
     m_destructionNotifier(this) {
+    QueryVideoPresentNetworkID();
     CacheMonitorData();
   }
   
@@ -488,7 +494,17 @@ namespace dxvk {
     m_monitorInfo->ReleaseMonitorData();
 
     // Sleep until the given time point
-    Sleep::sleepUntil(t1, t2);
+    if (m_vpn_id) {
+      Sleep::sleepUntil(t1, t2);
+    } else {
+      D3DKMT_WAITFORVERTICALBLANKEVENT wait = {};
+      wait.hAdapter = m_adapter->GetDXVKAdapter()->kmtLocal();
+
+      if (D3DKMTWaitForVerticalBlankEvent(&wait)) {
+        Sleep::sleepUntil(t1, t2);
+      }
+    }
+
     return S_OK;
   }
   
@@ -633,6 +649,17 @@ namespace dxvk {
     }
   }
 
+  void DxgiOutput::QueryVideoPresentNetworkID() {
+    DXGI_OUTPUT_DESC desc = {};
+    GetDesc(&desc);
+
+    D3DKMT_QUERYREMOTEVIDPNSOURCEFROMGDIDISPLAYNAME query = {};
+    copyToStringArray(query.DeviceName, desc.DeviceName);
+
+    if (!D3DKMTQueryRemoteVidPnSourceFromGdiDisplayName(&query)) {
+      m_vpn_id = query.VidPnSourceId;
+    }
+  }
 
   void DxgiOutput::CacheMonitorData() {
     // Try and find an existing monitor info.
