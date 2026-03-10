@@ -1,5 +1,8 @@
 #pragma once
 
+#include <optional>
+
+#include "dxvk_barrier.h"
 #include "dxvk_buffer.h"
 #include "dxvk_compute.h"
 #include "dxvk_constant_state.h"
@@ -21,11 +24,12 @@ namespace dxvk {
    * has changed and/or needs to be updated.
    */
   enum class DxvkContextFlag : uint64_t  {
-    GpRenderPassBound,          ///< Render pass is currently bound
+    GpRenderPassActive,         ///< Render pass is currently bound
     GpRenderPassSuspended,      ///< Render pass is currently suspended
     GpRenderPassSecondaryCmd,   ///< Render pass uses secondary command buffer
     GpRenderPassSideEffects,    ///< Render pass has side effects
     GpRenderPassNeedsFlush,     ///< Render pass has pending resolves or discards
+    GpRenderPassUnsynchronized, ///< Render pass is not fully serialized.
     GpXfbActive,                ///< Transform feedback is enabled
     GpDirtyRenderTargets,       ///< Bound render targets are out of date
     GpDirtyPipeline,            ///< Graphics pipeline binding is out of date
@@ -58,6 +62,7 @@ namespace dxvk {
     GpHasPushData,              ///< Graphics pipeline uses push data
     GpIndependentSets,          ///< Graphics pipeline layout was created with independent sets
 
+    CpComputePassActive,        ///< Whether we are inside a compute pass
     CpDirtyPipelineState,       ///< Compute pipeline is out of date
     CpDirtySpecConstants,       ///< Compute spec constants are out of date
     CpHasPushData,              ///< Compute pipeline uses push data
@@ -76,6 +81,16 @@ namespace dxvk {
 
 
   /**
+   * \brief Binding model implementation
+   */
+  enum class DxvkBindingModel : uint32_t {
+    Legacy,
+    DescriptorBuffer,
+    DescriptorHeap,
+  };
+
+
+  /**
    * \brief Context feature bits
    */
   enum class DxvkContextFeature : uint32_t {
@@ -84,6 +99,7 @@ namespace dxvk {
     DebugUtils,
     DirectMultiDraw,
     DescriptorBuffer,
+    DescriptorHeap,
     FeatureCount
   };
 
@@ -205,9 +221,10 @@ namespace dxvk {
   
   struct DxvkDeferredResolve {
     Rc<DxvkImageView> imageView;
-    uint32_t layerMask;
-    VkResolveModeFlagBits depthMode;
-    VkResolveModeFlagBits stencilMode;
+    uint32_t layerMask = 0u;
+    VkResolveModeFlagBits depthMode   = { };
+    VkResolveModeFlagBits stencilMode = { };
+    VkRenderingAttachmentFlagsKHR flags = 0u;
   };
 
 
@@ -241,4 +258,44 @@ namespace dxvk {
     Rc<DxvkImageView> imageView;
   };
   
+
+  /**
+   * \brief Deferred clear info
+   */
+  struct DxvkClearInfo {
+    Rc<DxvkImageView> view = nullptr;
+    VkAttachmentLoadOp loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    VkAttachmentLoadOp loadOpS = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    VkClearValue clearValue = { };
+    VkImageAspectFlags clearAspects = 0;
+    VkImageAspectFlags discardAspects = 0;
+  };
+
+
+  /**
+   * \brief Deferred clear batch
+   */
+  class DxvkClearBatch {
+
+  public:
+
+    void add(std::optional<DxvkClearInfo>&& info) {
+      if (info)
+        m_batch.push_back(std::move(*info));
+    }
+
+    std::pair<const DxvkClearInfo*, size_t> getRange() const {
+      return std::make_pair(m_batch.begin(), m_batch.size());
+    }
+
+    bool empty() const {
+      return m_batch.empty();
+    }
+
+  private:
+
+    small_vector<DxvkClearInfo, 16u> m_batch;
+
+  };
+
 }

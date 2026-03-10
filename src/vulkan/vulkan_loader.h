@@ -160,12 +160,20 @@ namespace dxvk::vk {
     VULKAN_FN(vkSubmitDebugUtilsMessageEXT);
     #endif
 
+    #ifdef VK_EXT_descriptor_heap
+    VULKAN_FN(vkGetPhysicalDeviceDescriptorSizeEXT);
+    #endif
+
     #ifdef VK_EXT_full_screen_exclusive
     VULKAN_FN(vkGetPhysicalDeviceSurfacePresentModes2EXT);
     #endif
 
     #ifdef VK_EXT_swapchain_maintenance1
     VULKAN_FN(vkReleaseSwapchainImagesEXT);
+    #endif
+
+    #ifdef VK_EXT_sample_locations
+    VULKAN_FN(vkGetPhysicalDeviceMultisamplePropertiesEXT);
     #endif
   };
   
@@ -377,6 +385,17 @@ namespace dxvk::vk {
     VULKAN_FN(vkGetAccelerationStructureOpaqueCaptureDescriptorDataEXT);
     #endif
 
+    #ifdef VK_EXT_descriptor_heap
+    VULKAN_FN(vkWriteSamplerDescriptorsEXT);
+    VULKAN_FN(vkWriteResourceDescriptorsEXT);
+    VULKAN_FN(vkCmdBindSamplerHeapEXT);
+    VULKAN_FN(vkCmdBindResourceHeapEXT);
+    VULKAN_FN(vkCmdPushDataEXT);
+    VULKAN_FN(vkGetImageOpaqueCaptureDataEXT);
+    VULKAN_FN(vkRegisterCustomBorderColorEXT);
+    VULKAN_FN(vkUnregisterCustomBorderColorEXT);
+    #endif
+
     #ifdef VK_EXT_debug_utils
     VULKAN_FN(vkQueueBeginDebugUtilsLabelEXT);
     VULKAN_FN(vkQueueEndDebugUtilsLabelEXT);
@@ -426,7 +445,6 @@ namespace dxvk::vk {
 
     #ifdef VK_EXT_sample_locations
     VULKAN_FN(vkCmdSetSampleLocationsEXT);
-    VULKAN_FN(vkGetPhysicalDeviceMultisamplePropertiesEXT);
     #endif
 
     #ifdef VK_EXT_shader_module_identifier

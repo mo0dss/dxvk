@@ -70,7 +70,10 @@ namespace dxvk {
    * \brief Rendering info
    */
   struct DxvkRenderingInfo {
+    std::array<VkRenderingAttachmentFlagsInfoKHR, MaxNumRenderTargets> colorAttachmentFlags = { };
+    std::array<VkAttachmentFeedbackLoopInfoEXT, MaxNumRenderTargets> colorFeedbackLoop = { };
     std::array<VkRenderingAttachmentInfo, MaxNumRenderTargets> color = { };
+    VkAttachmentFeedbackLoopInfoEXT depthStencilFeedbackLoop = { };
     VkRenderingAttachmentInfo depth = { };
     VkRenderingAttachmentInfo stencil = { };
     VkRenderingInfo rendering = { };

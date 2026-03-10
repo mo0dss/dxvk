@@ -167,7 +167,9 @@ namespace dxvk {
     // significant overhead, and some games will not work with it enabled.
     std::string debugEnv = env::getEnvVar("DXVK_DEBUG");
 
-    bool capture = debugEnv.empty() && env::getEnvVar("ENABLE_VULKAN_RENDERDOC_CAPTURE") == "1";
+    bool capture = debugEnv.empty() && (
+      env::getEnvVar("ENABLE_VULKAN_RENDERDOC_CAPTURE") == "1" ||
+      env::getEnvVar("MESA_VK_TRACE") != "");
 
     if (debugEnv == "validation")
       m_debugFlags.set(DxvkDebugFlag::Validation);
@@ -241,7 +243,7 @@ namespace dxvk {
       appInfo.pApplicationName      = appName.c_str();
       appInfo.applicationVersion    = flags.raw();
       appInfo.pEngineName           = "DXVK";
-      appInfo.engineVersion         = VK_MAKE_API_VERSION(0, 2, 7, 1);
+      appInfo.engineVersion         = VK_MAKE_API_VERSION(0, 3, 0, 0);
       appInfo.apiVersion            = DxvkVulkanApiVersion;
 
       VkInstanceCreateInfo info = { VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
@@ -390,22 +392,21 @@ namespace dxvk {
       case VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT:   logLevel = LogLevel::Error; break;
     }
 
-    static const std::array<uint32_t, 9> ignoredIds = {
+    static const std::array<uint32_t, 6> ignoredIds = {
       // Ignore image format features for depth-compare instructions.
       // These errors are expected in D3D9 and some D3D11 apps.
       0x23259a0d,
       0x4b9d1597,
       0x534c50ad,
       0x9750b479,
-      // Ignore vkCmdBindPipeline errors related to dynamic rendering.
-      // Validation layers are buggy here and will complain about any
-      // command buffer with more than one render pass.
-      0x11b37e31,
-      0x151f5e5a,
-      0x6c16bfb4,
-      0xd6d77e1e,
-      // Ignore spam about OpSampledImage, validation is wrong here.
-      0xa5625282,
+      // Spammy perf warning about unused fragment shader outputs.
+      // This is expected and will be optimized by any sane driver.
+      0x46877e3e,
+      // Spammy warning about vertex format mismatches in many games.
+      // Quite common and we rely on hardware/drivers implementing
+      // D3D behaviour here since this is really just an app bug
+      // that we can't easily work around in most cases.
+      0x9367b2c1,
     };
 
     for (auto id : ignoredIds) {
@@ -416,7 +417,7 @@ namespace dxvk {
     std::stringstream str;
 
     if (pCallbackData->pMessageIdName)
-      str << pCallbackData->pMessageIdName << ": " << std::endl;
+      str << pCallbackData->pMessageIdName << " (0x" << std::hex << pCallbackData->messageIdNumber << ")" << std::endl;
 
     str << pCallbackData->pMessage;
 

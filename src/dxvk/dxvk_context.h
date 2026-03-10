@@ -26,6 +26,8 @@ namespace dxvk {
     constexpr static VkDeviceSize MaxDiscardSize     =  16u << 10u;
 
     constexpr static uint32_t DirectMultiDrawBatchSize = 256u;
+
+    constexpr static uint32_t MaxUnsynchronizedDraws = 64u;
   public:
     
     DxvkContext(const Rc<DxvkDevice>& device);
@@ -417,18 +419,6 @@ namespace dxvk {
       const Rc<DxvkImageView>&    srcView,
       const VkOffset3D*           srcOffsets,
             VkFilter              filter);
-    
-    /**
-     * \brief Changes image layout
-     * 
-     * Permanently changes the layout for a given
-     * image. Immediately performs the transition.
-     * \param [in] image The image to transition
-     * \param [in] layout New image layout
-     */
-    void changeImageLayout(
-      const Rc<DxvkImage>&        image,
-            VkImageLayout         layout);
     
     /**
      * \brief Clears a buffer with a fixed value
@@ -1348,9 +1338,13 @@ namespace dxvk {
 
     uint64_t                m_trackingId = 0u;
     uint32_t                m_renderPassIndex = 0u;
-    
+    uint32_t                m_unsynchronizedDrawCount = 0u;
+
     Rc<DxvkCommandList>     m_cmd;
     Rc<DxvkBuffer>          m_zeroBuffer;
+
+    Rc<DxvkBuffer>          m_scratchBuffer;
+    VkDeviceSize            m_scratchOffset = 0u;
 
     DxvkContextFlags        m_flags;
     DxvkContextState        m_state;
@@ -1555,6 +1549,17 @@ namespace dxvk {
             uint32_t              maxCount,
             uint32_t              stride);
 
+    void generateMipmapsHw(
+      const Rc<DxvkImageView>&        imageView,
+            VkFilter                  filter);
+
+    void generateMipmapsFb(
+      const Rc<DxvkImageView>&        imageView,
+            VkFilter                  filter);
+
+    void generateMipmapsCs(
+      const Rc<DxvkImageView>&        imageView);
+
     void resolveImageHw(
       const Rc<DxvkImage>&            dstImage,
       const Rc<DxvkImage>&            srcImage,
@@ -1607,12 +1612,15 @@ namespace dxvk {
     VkAttachmentStoreOp determineClearStoreOp(
             VkAttachmentLoadOp        loadOp) const;
 
-    void performClear(
+    std::optional<DxvkClearInfo> batchClear(
       const Rc<DxvkImageView>&        imageView,
             int32_t                   attachmentIndex,
             VkImageAspectFlags        discardAspects,
             VkImageAspectFlags        clearAspects,
             VkClearValue              clearValue);
+
+    void performClears(
+      const DxvkClearBatch&           batch);
 
     void deferClear(
       const Rc<DxvkImageView>&        imageView,
@@ -1645,14 +1653,18 @@ namespace dxvk {
             VkRenderingAttachmentInfo&  attachment,
             DxvkAccess                  access) const;
 
-    void startRenderPass();
-    void spillRenderPass(bool suspend);
+    void beginRenderPass();
+    void endRenderPass(bool suspend);
+
+    void endCurrentPass(bool suspend);
     
     void acquireRenderTargets(
       const DxvkFramebufferInfo&  framebufferInfo,
             DxvkRenderPassOps&    ops);
 
     void releaseRenderTargets();
+
+    bool renderPassStartUnsynchronized();
 
     void renderPassBindFramebuffer(
       const DxvkFramebufferInfo&  framebufferInfo,
@@ -1688,16 +1700,17 @@ namespace dxvk {
     template<VkPipelineBindPoint BindPoint>
     void updateSamplerSet(const DxvkPipelineLayout* layout);
 
-    template<VkPipelineBindPoint BindPoint>
+    template<VkPipelineBindPoint BindPoint, bool AlwaysTrack>
     bool updateResourceBindings(const DxvkPipelineBindings* layout);
 
-    template<VkPipelineBindPoint BindPoint>
+    template<VkPipelineBindPoint BindPoint, bool AlwaysTrack>
     void updateDescriptorSetsBindings(const DxvkPipelineBindings* layout);
 
-    template<VkPipelineBindPoint BindPoint>
-    bool updateDescriptorBufferBindings(const DxvkPipelineBindings* layout);
 
-    template<VkPipelineBindPoint BindPoint>
+    template<VkPipelineBindPoint BindPoint, DxvkBindingModel Model, bool AlwaysTrack>
+    bool updateDescriptorHeapBindings(const DxvkPipelineBindings* layout);
+
+    template<VkPipelineBindPoint BindPoint, bool AlwaysTrack>
     void updatePushDataBindings(const DxvkPipelineBindings* layout);
 
     void updateComputeShaderResources();
@@ -1720,6 +1733,14 @@ namespace dxvk {
       const DxvkImage&              image,
       const VkImageSubresourceRange& subresources);
 
+    DxvkDeferredResolve* findOverlappingDeferredResolve(
+      const DxvkImage&              image,
+      const VkImageSubresourceRange& subresources);
+
+    bool isBoundAsRenderTarget(
+      const DxvkImage&              image,
+      const VkImageSubresourceRange& subresources);
+
     void updateIndexBufferBinding();
     void updateVertexBufferBindings();
 
@@ -1730,7 +1751,10 @@ namespace dxvk {
 
     template<VkPipelineBindPoint BindPoint>
     void updatePushData();
-    
+
+    void beginComputePass();
+    void endComputePass();
+
     template<bool Indirect, bool Resolve = true>
     bool commitComputeState();
     
@@ -1783,6 +1807,17 @@ namespace dxvk {
             return DxvkAccessFlags(DxvkAccess::Write);
         }
       } else {
+        // In an unsynchronized render pass we need to ensure that we properly
+        // sync against accesses from outside the pass.
+        if (m_flags.test(DxvkContextFlag::GpRenderPassUnsynchronized)) {
+          VkPipelineStageFlags2 stageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT
+                                          | VK_PIPELINE_STAGE_2_TRANSFER_BIT
+                                          | VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+
+          if (m_execBarriers.hasPendingStages(stageMask))
+            return DxvkAccessFlags();
+        }
+
         // For graphics, the only type of unrelated access we have to worry about
         // is transform feedback writes, in which case inserting a barrier is fine.
         if (m_barrierControl.test(DxvkBarrierControl::GraphicsAllowReadWriteOverlap))
@@ -1896,8 +1931,7 @@ namespace dxvk {
 
     void prepareSharedImages();
 
-    void transitionImageLayout(
-            DxvkCmdBuffer             cmdBuffer,
+    bool transitionImageLayout(
             DxvkImage&                image,
       const VkImageSubresourceRange&  subresources,
             VkPipelineStageFlags2     srcStages,
@@ -2099,20 +2133,19 @@ namespace dxvk {
       const DxvkResourceAccess*       accessBatch);
 
     bool prepareOutOfOrderTransfer(
-      const Rc<DxvkBuffer>&           buffer,
+            DxvkBuffer&               buffer,
             VkDeviceSize              offset,
             VkDeviceSize              size,
             DxvkAccess                access);
 
     bool prepareOutOfOrderTransfer(
-      const Rc<DxvkBufferView>&       bufferView,
-            VkDeviceSize              offset,
-            VkDeviceSize              size,
+            DxvkImage&                image,
+      const VkImageSubresourceRange&  subresources,
+            bool                      discard,
             DxvkAccess                access);
 
-    bool prepareOutOfOrderTransfer(
-      const Rc<DxvkImage>&            image,
-            DxvkAccess                access);
+    bool prepareOutOfOrderTransition(
+            DxvkImage&                image);
 
     template<VkPipelineBindPoint BindPoint, typename Pred>
     bool checkResourceBarrier(
@@ -2174,9 +2207,13 @@ namespace dxvk {
 
     void endActiveDebugRegions();
 
-    template<VkPipelineBindPoint BindPoint>
+    DxvkResourceBufferInfo allocateScratchMemory(
+            VkDeviceSize                alignment,
+            VkDeviceSize                size);
+
+    template<bool AlwaysTrack>
     force_inline void trackUniformBufferBinding(const DxvkShaderDescriptor& binding, const DxvkBufferSlice& slice) {
-      if (BindPoint == VK_PIPELINE_BIND_POINT_COMPUTE || unlikely(slice.buffer()->hasGfxStores())) {
+      if (AlwaysTrack || unlikely(slice.buffer()->hasGfxStores())) {
         accessBuffer(DxvkCmdBuffer::ExecBuffer, slice,
           util::pipelineStages(binding.getStageMask()), binding.getAccess(), DxvkAccessOp::None);
       }
@@ -2184,11 +2221,11 @@ namespace dxvk {
       m_cmd->track(slice.buffer(), DxvkAccess::Read);
     }
 
-    template<VkPipelineBindPoint BindPoint, bool IsWritable>
+    template<bool AlwaysTrack, bool IsWritable>
     force_inline void trackBufferViewBinding(const DxvkShaderDescriptor& binding, DxvkBufferView& view) {
       DxvkAccessOp accessOp = IsWritable ? binding.getAccessOp() : DxvkAccessOp::None;
 
-      if (BindPoint == VK_PIPELINE_BIND_POINT_COMPUTE || unlikely(view.buffer()->hasGfxStores())) {
+      if (AlwaysTrack || unlikely(view.buffer()->hasGfxStores())) {
         accessBuffer(DxvkCmdBuffer::ExecBuffer, view,
           util::pipelineStages(binding.getStageMask()), binding.getAccess(), accessOp);
       }
@@ -2198,11 +2235,11 @@ namespace dxvk {
       m_cmd->track(view.buffer(), access);
     }
 
-    template<VkPipelineBindPoint BindPoint, bool IsWritable>
+    template<bool AlwaysTrack, bool IsWritable>
     force_inline void trackImageViewBinding(const DxvkShaderDescriptor& binding, DxvkImageView& view) {
       DxvkAccessOp accessOp = IsWritable ? binding.getAccessOp() : DxvkAccessOp::None;
 
-      if (BindPoint == VK_PIPELINE_BIND_POINT_COMPUTE || unlikely(view.hasGfxStores())) {
+      if (AlwaysTrack || unlikely(view.hasGfxStores())) {
         accessImage(DxvkCmdBuffer::ExecBuffer, view,
           util::pipelineStages(binding.getStageMask()), binding.getAccess(), accessOp);
       }
@@ -2212,6 +2249,10 @@ namespace dxvk {
       m_cmd->track(view.image(), access);
     }
 
+    bool formatsAreImageCopyCompatible(
+            VkFormat                  dstFormat,
+            VkFormat                  srcFormat);
+
     static uint32_t computePushDataBlockOffset(uint32_t index) {
       return index ? MaxSharedPushDataSize + MaxPerStagePushDataSize * (index - 1u) : 0u;
     }
@@ -2220,7 +2261,7 @@ namespace dxvk {
       const DxvkStencilOp&            op,
             bool                      writable);
 
-    static bool formatsAreCopyCompatible(
+    static bool formatsAreBufferCopyCompatible(
             VkFormat                  imageFormat,
             VkFormat                  bufferFormat);
 

@@ -516,7 +516,7 @@ namespace dxvk {
      * \param [in] inheritanceInfo Command buffer inheritance info
      */
     void beginSecondaryCommandBuffer(
-      const VkCommandBufferInheritanceInfo& inheritanceInfo);
+            VkCommandBufferInheritanceInfo inheritanceInfo);
 
     /**
      * \brief Ends secondary command buffer
@@ -581,10 +581,11 @@ namespace dxvk {
 
 
     void cmdBeginRendering(
-      const VkRenderingInfo*        pRenderingInfo) {
-      m_cmd.execCommands = true;
+            DxvkCmdBuffer             cmdBuffer,
+      const VkRenderingInfo*          pRenderingInfo) {
+      m_cmd.execCommands |= cmdBuffer == DxvkCmdBuffer::ExecBuffer;
 
-      m_vkd->vkCmdBeginRendering(getCmdBuffer(), pRenderingInfo);
+      m_vkd->vkCmdBeginRendering(getCmdBuffer(cmdBuffer), pRenderingInfo);
     }
 
 
@@ -692,11 +693,12 @@ namespace dxvk {
     
     
     void cmdClearAttachments(
+            DxvkCmdBuffer           cmdBuffer,
             uint32_t                attachmentCount,
       const VkClearAttachment*      pAttachments,
             uint32_t                rectCount,
       const VkClearRect*            pRects) {
-      m_vkd->vkCmdClearAttachments(getCmdBuffer(),
+      m_vkd->vkCmdClearAttachments(getCmdBuffer(cmdBuffer),
         attachmentCount, pAttachments, rectCount, pRects);
     }
     
@@ -922,11 +924,12 @@ namespace dxvk {
     }
     
     
-    void cmdEndRendering() {
-      m_vkd->vkCmdEndRendering(getCmdBuffer());
+    void cmdEndRendering(
+            DxvkCmdBuffer             cmdBuffer) {
+      m_vkd->vkCmdEndRendering(getCmdBuffer(cmdBuffer));
     }
 
-    
+
     void cmdEndTransformFeedback(
             uint32_t                  firstBuffer,
             uint32_t                  bufferCount,
@@ -958,8 +961,8 @@ namespace dxvk {
 
       m_vkd->vkCmdPipelineBarrier2(getCmdBuffer(cmdBuffer), dependencyInfo);
     }
-    
-    
+
+
     void cmdPushConstants(
             DxvkCmdBuffer           cmdBuffer,
             VkPipelineLayout        layout,
@@ -969,6 +972,13 @@ namespace dxvk {
       const void*                   pValues) {
       m_vkd->vkCmdPushConstants(getCmdBuffer(cmdBuffer),
         layout, stageFlags, offset, size, pValues);
+    }
+
+
+    void cmdPushData(
+            DxvkCmdBuffer           cmdBuffer,
+      const VkPushDataInfoEXT*      info) {
+      m_vkd->vkCmdPushDataEXT(getCmdBuffer(cmdBuffer), info);
     }
 
 
@@ -1117,7 +1127,9 @@ namespace dxvk {
       VkCommandBuffer cmdBuffer = getCmdBuffer();
 
       m_vkd->vkCmdSetSampleLocationsEnableEXT(cmdBuffer, enable);
-      m_vkd->vkCmdSetSampleLocationsEXT(cmdBuffer, sampleLocations);
+
+      if (enable)
+        m_vkd->vkCmdSetSampleLocationsEXT(cmdBuffer, sampleLocations);
     }
 
     void cmdSetScissor(
@@ -1255,6 +1267,20 @@ namespace dxvk {
       m_descriptorSync = std::move(syncHandle);
     }
 
+    void ensureDescriptorHeapBinding() {
+      if (unlikely(m_descriptorHeapInvalidated)) {
+        this->rebindSamplerHeap();
+        this->rebindResourceHeap();
+
+        m_descriptorHeapInvalidated = false;
+      }
+    }
+
+    void invalidateDescriptorHeapBinding() {
+      // Re-bind heaps on next draw/dispatch
+      m_descriptorHeapInvalidated = true;
+    }
+
   private:
     
     DxvkDevice*               m_device;
@@ -1293,6 +1319,8 @@ namespace dxvk {
 
     std::vector<DxvkGraphicsPipeline*> m_pipelines;
 
+    bool m_descriptorHeapInvalidated = false;
+
     force_inline VkCommandBuffer getCmdBuffer() const {
       // Allocation logic will always provide an execution buffer
       return m_cmd.cmdBuffers[uint32_t(DxvkCmdBuffer::ExecBuffer)];
@@ -1328,6 +1356,14 @@ namespace dxvk {
             size_t                        pushDataSize,
       const void*                         pushData);
 
+    void bindResourcesDescriptorHeap(
+            DxvkCmdBuffer                 cmdBuffer,
+      const DxvkPipelineLayout*           layout,
+            uint32_t                      descriptorCount,
+      const DxvkDescriptorWrite*          descriptorInfos,
+            size_t                        pushDataSize,
+      const void*                         pushData);
+
     void bindResourcesDescriptorBuffer(
             DxvkCmdBuffer                 cmdBuffer,
       const DxvkPipelineLayout*           layout,
@@ -1336,7 +1372,15 @@ namespace dxvk {
             size_t                        pushDataSize,
       const void*                         pushData);
 
+    void rebindSamplerHeap();
+
+    void rebindResourceHeap();
+
     void rebindDescriptorBuffers();
+
+    void bindSamplerHeap(VkCommandBuffer cmdBuffer);
+
+    void bindResourceHeap(VkCommandBuffer cmdBuffer);
 
     void bindDescriptorBuffers(VkCommandBuffer cmdBuffer);
 
@@ -1347,6 +1391,14 @@ namespace dxvk {
     void countDescriptorStats(
       const Rc<DxvkResourceDescriptorRange>& range,
             VkDeviceSize                  baseOffset);
+
+    static VkBindHeapInfoEXT getHeapBindInfo(const DxvkDescriptorHeapBindingInfo& heapInfo) {
+      VkBindHeapInfoEXT bindInfo = { VK_STRUCTURE_TYPE_BIND_HEAP_INFO_EXT };
+      bindInfo.heapRange.address = heapInfo.gpuAddress;
+      bindInfo.heapRange.size = heapInfo.bufferSize;
+      bindInfo.reservedRangeSize = heapInfo.reservedSize;
+      return bindInfo;
+    }
 
   };
   

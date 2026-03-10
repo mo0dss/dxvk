@@ -43,8 +43,7 @@ namespace dxvk {
                        (m_mapping.FormatColor == VK_FORMAT_D32_SFLOAT_S8_UINT || m_mapping.FormatColor == VK_FORMAT_D32_SFLOAT);
     m_supportsFetch4 = DetermineFetch4Compatibility();
 
-    const bool createImage = m_desc.Pool != D3DPOOL_SYSTEMMEM && m_desc.Pool != D3DPOOL_SCRATCH && m_desc.Format != D3D9Format::NULL_FORMAT;
-    if (createImage) {
+    if (TextureUsesImage(&m_desc)) {
       m_image = CreatePrimaryImage(ResourceType, pSharedHandle);
 
       if (unlikely(m_image == nullptr && (m_desc.Usage & D3DUSAGE_AUTOGENMIPMAP))) {
@@ -90,11 +89,15 @@ namespace dxvk {
       m_totalSize += GetMipSize(i);
     }
 
+    // Add a tiny amount of padding at the end because some games read/write OOB
+    // Medieval: Total War 1 for example seems to have an off-by-one bug in copying data for a managed texture.
+    uint32_t paddedSize = align(m_totalSize + 1, CACHE_LINE_SIZE);
+
     // Initialization is handled by D3D9Initializer
     if (m_mapMode == D3D9_COMMON_TEXTURE_MAP_MODE_UNMAPPABLE)
-      m_data = m_device->GetAllocator()->Alloc(m_totalSize);
+      m_data = m_device->GetAllocator()->Alloc(paddedSize);
     else if (m_mapMode != D3D9_COMMON_TEXTURE_MAP_MODE_NONE && m_desc.Pool != D3DPOOL_DEFAULT)
-      CreateBuffer(false);
+      CreateBuffer(false, paddedSize);
   }
 
 
@@ -176,10 +179,33 @@ namespace dxvk {
         return D3DERR_INVALIDCALL;
     }
 
-    // Sample counts need to be valid
+    // Sample counts need to be valid and supported
     VkSampleCountFlagBits sampleCount;
-    if (FAILED(DecodeMultiSampleType(pDevice->GetDXVKDevice(), pDesc->MultiSample, pDesc->MultisampleQuality, &sampleCount)))
+    HRESULT hr = DecodeMultiSampleType(pDesc->MultiSample, pDesc->MultisampleQuality, &sampleCount);
+    if (FAILED(hr))
+      return hr;
+
+    // We never create an image for SCRATCH, SYSTEMMEM or NULL FMT D3D9 textures, so there's no point in checking
+    // whether the GPU supports the specified sampled count for those.
+    if (ResourceType == D3DRTYPE_SURFACE && TextureUsesImage(pDesc)) {
+      D3DMULTISAMPLE_TYPE d3dSampleCount = D3DMULTISAMPLE_TYPE(sampleCount);
+      // VK_SAMPLE_COUNT_1_BIT = 1 but the D3D9 equivalent we need is D3DMULTISAMPLE_NONE = 0
+      if (d3dSampleCount == D3DMULTISAMPLE_NONMASKABLE)
+        d3dSampleCount = D3DMULTISAMPLE_NONE;
+
+      hr = pDevice->GetAdapter()->CheckDeviceMultiSampleType(
+        D3DDEVTYPE_HAL,
+        pDesc->Format,
+        false,
+        d3dSampleCount,
+        nullptr
+      );
+      if (FAILED(hr))
+        return hr;
+    } else if (sampleCount != VK_SAMPLE_COUNT_1_BIT) {
+      // D3D9 only supports MSAA for surfaces
       return D3DERR_INVALIDCALL;
+    }
 
     // Using MANAGED pool with DYNAMIC usage is illegal
     if (IsPoolManaged(pDesc->Pool) && (pDesc->Usage & D3DUSAGE_DYNAMIC))
@@ -284,12 +310,12 @@ namespace dxvk {
   }
 
 
-  void D3D9CommonTexture::CreateBuffer(bool Initialize) {
+  void D3D9CommonTexture::CreateBuffer(bool Initialize, uint32_t Size) {
     if (likely(m_buffer != nullptr))
       return;
 
     DxvkBufferCreateInfo info;
-    info.size   = m_totalSize;
+    info.size   = Size;
     info.usage  = VK_BUFFER_USAGE_TRANSFER_SRC_BIT
                 | VK_BUFFER_USAGE_TRANSFER_DST_BIT
                 | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
@@ -395,7 +421,7 @@ namespace dxvk {
       imageInfo.shared = true;
     }
 
-    DecodeMultiSampleType(m_device->GetDXVKDevice(), m_desc.MultiSample, m_desc.MultisampleQuality, &imageInfo.sampleCount);
+    DecodeMultiSampleType(m_desc.MultiSample, m_desc.MultisampleQuality, &imageInfo.sampleCount);
 
     // The image must be marked as mutable if it can be reinterpreted
     // by a view with a different format. Depth-stencil formats cannot
@@ -412,8 +438,6 @@ namespace dxvk {
       imageInfo.viewFormats     = m_mapping.Formats;
     }
 
-    const bool hasAttachmentFeedbackLoops =
-      m_device->GetDXVKDevice()->features().extAttachmentFeedbackLoopLayout.attachmentFeedbackLoopLayout;
     const bool isRT = m_desc.Usage & D3DUSAGE_RENDERTARGET;
     const bool isDS = m_desc.Usage & D3DUSAGE_DEPTHSTENCIL;
     const bool isAutoGen = m_desc.Usage & D3DUSAGE_AUTOGENMIPMAP;
@@ -436,9 +460,6 @@ namespace dxvk {
       imageInfo.access |= VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT
                        |  VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
     }
-
-    if (ResourceType == D3DRTYPE_TEXTURE && (isRT || isDS) && hasAttachmentFeedbackLoops)
-      imageInfo.usage |= VK_IMAGE_USAGE_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT;
 
     if (ResourceType == D3DRTYPE_CUBETEXTURE)
       imageInfo.flags |= VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
@@ -551,10 +572,6 @@ namespace dxvk {
 
     // Storage images require GENERAL.
     if (Usage & VK_IMAGE_USAGE_STORAGE_BIT)
-      return VK_IMAGE_LAYOUT_GENERAL;
-
-    // Use GENERAL for non-renderable images to avoid layout transitions.
-    if (Usage == VK_IMAGE_USAGE_SAMPLED_BIT)
       return VK_IMAGE_LAYOUT_GENERAL;
 
     // If the image is used only as an attachment, we never
