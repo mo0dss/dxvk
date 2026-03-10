@@ -312,6 +312,9 @@ namespace dxvk {
     DxvkInstance*           m_instance  = nullptr;
     VkPhysicalDevice        m_handle    = VK_NULL_HANDLE;
     D3DKMT_HANDLE           m_kmtLocal = 0;
+    bool                    m_hardwareFlipQueue = false;
+    uint32_t                m_hardwareMaxFlipCount = 0;
+    uint32_t                m_hardwareMaxMMIOFlipCount = 0;
 
     DxvkDeviceCapabilities  m_capabilities;
 

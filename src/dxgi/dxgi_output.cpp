@@ -20,6 +20,11 @@
 
 namespace dxvk {
 
+  template <size_t N>
+  static void copyToStringArray(wchar_t (&dst)[N], const wchar_t* src) {
+    dxvk::str::wstrlcpy(dst, src, N);
+  }
+
   DxgiOutput::DxgiOutput(
     const Com<DxgiFactory>& factory,
     const Com<DxgiAdapter>& adapter,
@@ -29,12 +34,25 @@ namespace dxvk {
     m_monitorInfo ( factory->GetMonitorInfo() ),
     m_monitor     ( monitor ),
     m_destructionNotifier(this) {
+
+    DXGI_OUTPUT_DESC desc = {};
+    GetDesc(&desc);
+
+    D3DKMT_QUERYREMOTEVIDPNSOURCEFROMGDIDISPLAYNAME query = {};
+    copyToStringArray(query.DeviceName, desc.DeviceName);
+
+    if (D3DKMTQueryRemoteVidPnSourceFromGdiDisplayName(&query)) {
+      Logger::warn("Failed to acquire Video Present Network handle");
+    } else {
+      m_vpn_id = query.VidPnSourceId;
+    }
+
     CacheMonitorData();
   }
   
   
   DxgiOutput::~DxgiOutput() {
-    
+
   }
   
   
@@ -487,8 +505,14 @@ namespace dxvk {
 
     m_monitorInfo->ReleaseMonitorData();
 
-    // Sleep until the given time point
-    Sleep::sleepUntil(t1, t2);
+    D3DKMT_WAITFORVERTICALBLANKEVENT wait = {};
+    wait.hAdapter = m_adapter->GetDXVKAdapter()->kmtLocal();
+
+    if (D3DKMTWaitForVerticalBlankEvent(&wait)) {
+      // Sleep until the given time point
+      Sleep::sleepUntil(t1, t2);
+    }
+
     return S_OK;
   }
   

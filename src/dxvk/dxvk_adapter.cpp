@@ -38,6 +38,35 @@ namespace dxvk {
       else
         m_kmtLocal = open.hAdapter;
     }
+
+    if (m_kmtLocal) {
+      D3DKMT_QUERYADAPTERINFO info = {};
+      info.hAdapter = m_kmtLocal;
+      info.Type = KMTQAITYPE_WDDM_3_0_CAPS;
+
+      D3DKMT_WDDM_3_0_CAPS wddm3_caps = {};
+      info.PrivateDriverDataSize = sizeof(D3DKMT_WDDM_3_0_CAPS);
+      info.pPrivateDriverData = &wddm3_caps;
+
+      if (SUCCEEDED(D3DKMTQueryAdapterInfo(&info))) {
+        m_hardwareFlipQueue = wddm3_caps.HwFlipQueueSupportState & DXGK_FEATURE_SUPPORT_STABLE;
+      }
+    }
+
+    if (m_hardwareFlipQueue) {
+      D3DKMT_QUERYADAPTERINFO info = {};
+      info.hAdapter = m_kmtLocal;
+      info.Type = KMTQAITYPE_FLIPQUEUEINFO;
+
+      D3DKMT_FLIPQUEUEINFO hfq_caps = {};
+      info.PrivateDriverDataSize = sizeof(D3DKMT_FLIPQUEUEINFO);
+      info.pPrivateDriverData = &hfq_caps;
+
+      if (SUCCEEDED(D3DKMTQueryAdapterInfo(&info))) {
+        m_hardwareMaxFlipCount = hfq_caps.MaxHardwareFlipQueueLength;
+        m_hardwareMaxMMIOFlipCount = hfq_caps.MaxSoftwareFlipQueueLength;
+      }
+    }
   }
   
   

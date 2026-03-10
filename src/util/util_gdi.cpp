@@ -99,6 +99,11 @@ namespace dxvk {
     return -1;
   }
 
+  NTSTATUS D3DKMTQueryAdapterInfo(const D3DKMT_QUERYADAPTERINFO *unnamedParam1) {
+    Logger::warn("D3DKMTQueryAdapterInfo: Not available on this platform.");
+    return -1;
+  }
+
   NTSTATUS WINAPI D3DKMTReleaseKeyedMutex(D3DKMT_RELEASEKEYEDMUTEX *desc) {
     Logger::warn("D3DKMTReleaseKeyedMutex: Not available on this platform.");
     return -1;
@@ -106,6 +111,16 @@ namespace dxvk {
 
   NTSTATUS WINAPI D3DKMTShareObjects(UINT count, const D3DKMT_HANDLE *handles, OBJECT_ATTRIBUTES *attr, UINT access, HANDLE *handle) {
     Logger::warn("D3DKMTShareObjects: Not available on this platform.");
+    return -1;
+  }
+
+  NTSTATUS WINAPI D3DKMTQueryRemoteVidPnSourceFromGdiDisplayName(D3DKMT_QUERYREMOTEVIDPNSOURCEFROMGDIDISPLAYNAME *unnamedParam1) {
+    Logger::warn("D3DKMTQueryRemoteVidPnSourceFromGdiDisplayName: Not available on this platform.");
+    return -1;
+  }
+
+  NTSTATUS WINAPI D3DKMTWaitForVerticalBlankEvent(const D3DKMT_WAITFORVERTICALBLANKEVENT *unnamedParam1) {
+    Logger::warn("D3DKMTWaitForVerticalBlankEvent: Not available on this platform.");
     return -1;
   }
 #else
